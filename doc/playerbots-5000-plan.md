@@ -83,6 +83,12 @@ Raw 3,000-bot gate: `var/benchmarks/20260728-115206-3000-gate-opt1`.
 Raw 4,000-bot gate: `var/benchmarks/20260728-120621-4000-gate-opt1`.
 Raw 5,000-bot gate: `var/benchmarks/20260728-123018-5000-gate-opt1`.
 
+Post-benchmark sustained check on 2026-07-28: 5,000/5,000 bots remained online, worldserver CPU was 330.29%,
+memory was 7.69 GiB, and the latest p95/p99/max world-update window was 23/26/29 ms. The container had not
+restarted or been OOM-killed. The world-thread queue remained empty with peak 82 and zero failed or skipped
+operations. The only broad error-pattern match was the benign container startup warning that process priority
+could not be raised.
+
 ## Final local operation
 
 The local Compose override defaults to 5,000 active bots, a 300-bot login batch, eight map workers, and 30-second
