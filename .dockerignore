@@ -7,6 +7,7 @@
 !/env/dist/.gitkeep
 /env/user/*
 /.env*
+/modules/mod-ollama-chat
 .idea
 !.gitkeep
 

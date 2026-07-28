@@ -75,6 +75,8 @@ override the default 60 bots processed per 20-second manager interval, but must 
 | 4,000 | Fourth scaling gate, login batch 200 | 345.04% | 6.55 GiB | 15-18 / 19-21 / 20-30 ms across 10 windows | queue 0, peak 72, 0 failed/skipped | pass; +1.9% CPU for +33% bots |
 | 5,000 | Target gate, login batch 300 | 343.48% | 6.94 GiB | 18-20 / 22-24 / 23-28 ms across 10 windows | queue 0, peak 82, 0 failed/skipped; no errors/OOM/restart | machine pass; human-client smoke test accepted |
 | 5,000 | Avoid disabled-profiler metric-name copies | 337.26% | 6.95 GiB | 22-24 / 24-27 / 25-30 ms normally; one 53 ms max | queue 0, peak 49, 0 failed/skipped; no errors/OOM/restart | pass; CPU -1.8%, memory flat; tick variance slightly higher |
+| 5,000 | GUID-safe grind-target cache, one reaction interval | 344.03% | 6.99 GiB | 22-23 / 26-28 / 27-32 ms | no errors/OOM/restart | hotspot -88.7%; whole-process CPU inconclusive due activity variance |
+| 5,000 | Deduplicate triggers; cache spatial GUID lists for 100 ms | 336.67% | 6.96 GiB | 22-26 / 23-29 / 24-35 ms | queue 0, peak 26, 0 failed/skipped; no errors/OOM/restart | pass; CPU -2.1% vs prior run and -2.0% vs original target gate |
 
 Raw baseline: `var/benchmarks/20260728-110734-500-baseline-prefixed-image`.
 Raw optimized run: `var/benchmarks/20260728-111509-500-opt1-no-disabled-perf-label`.
@@ -84,6 +86,8 @@ Raw 3,000-bot gate: `var/benchmarks/20260728-115206-3000-gate-opt1`.
 Raw 4,000-bot gate: `var/benchmarks/20260728-120621-4000-gate-opt1`.
 Raw 5,000-bot gate: `var/benchmarks/20260728-123018-5000-gate-opt1`.
 Raw metric-name optimization: `var/benchmarks/20260728-125806-5000-opt2-no-perf-name-copy`.
+Raw grind-target cache run: `var/benchmarks/20260728-131754-5000-opt3-grind-guid-cache`.
+Raw combined trigger/spatial-cache run: `var/benchmarks/20260728-134207-5000-opt4-trigger-spatial-cache`.
 
 Post-benchmark sustained check on 2026-07-28: 5,000/5,000 bots remained online, worldserver CPU was 330.29%,
 memory was 7.69 GiB, and the latest p95/p99/max world-update window was 23/26/29 ms. The container had not
@@ -110,6 +114,26 @@ mean CPU from 343.48% to 337.26% (1.8% relative), with memory effectively flat. 
 and tick windows were slightly busier, so this is recorded as a modest positive rather than a precise causal
 speedup.
 
+The `grind target` value was then changed from recomputing on every access to caching an `ObjectGuid` for one
+configured AI reaction interval. The GUID is resolved on every use and a removed, dead, or out-of-world target
+invalidates immediately, so the cache does not retain a raw `Unit*`. In matched 30-second profiler samples its
+share fell from 4.686% to 0.530%, an 88.7% reduction. The five-minute whole-process run measured 344.03% CPU,
+which was effectively flat against the original gate and higher than the preceding run because bot activity had
+increased; the isolated hotspot result is therefore retained without claiming a global improvement from that
+run.
+
+Trigger processing also only remembered triggers that fired. A false trigger shared by several strategies could
+therefore be evaluated more than once in the same AI cycle. The evaluation map now records both true and false
+results while still applying a true result to every strategy node. A profiler comparison reduced trigger
+evaluations from about 1,707 to 1,664 per tick (2.5%) in this workload.
+
+Finally, nearest-unit searches now cache their GUID-list results for 100 ms, matching the normal reaction cadence.
+This prevents repeated map-grid and line-of-sight scans when several values request the same spatial list during
+one AI cycle, without retaining world-object pointers or reducing normal decision frequency. The combined
+five-minute run measured 336.67% CPU: 2.1% below the immediately preceding run and 2.0% below the original target
+gate. Memory remained flat, latency passed, and the work queue completed all 5,000 logins with no failed or
+skipped operations.
+
 ## Final local operation
 
 The local Compose override defaults to 5,000 active bots, a 300-bot login batch, eight map workers, and 30-second
@@ -131,8 +155,6 @@ performance monitor disabled during normal play; it adds locks and allocation ov
 
 ## Candidate changes
 
-- Investigate bounded, GUID-safe caching or lower-frequency evaluation for noncombat enemy-player proximity and
-  grind-target selection. Do not retain raw `Unit*` pointers across updates.
 - Examine the gathering-loot and RPG NPC-movement action paths for redundant work before changing scheduling.
 - Measure the world-thread work queue before changing its batch size or cadence.
 - Tune low-priority, noncombat AI scheduling only if it preserves independent world activity and human-client
