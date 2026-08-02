@@ -12,3 +12,15 @@
 
 # do not ignore the ccache folder (used by the ci)
 !/var/docker/ccache
+
+# Git metadata, ~1.3 GB of it. Nothing in the build reads a repository any more:
+# the revision that used to come from `git describe` is passed to CMake as the
+# AC_REV_* build args instead. See the comment on those in apps/docker/Dockerfile.
+/.git
+/modules/*/.git
+/deps/*/.git
+
+# Superseded migrations, kept in-tree for reference only. No row in
+# `updates_include` points at this directory, so dbimport never reads it, but
+# `COPY data data` was putting ~290 MB of it into the db-import image.
+/data/sql/old

@@ -112,7 +112,7 @@ if(UNIX AND WITH_PERFTOOLS)
     find_package(Gperftools)
 endif()
 
-if(NOT WITHOUT_GIT)
+if(NOT WITHOUT_GIT AND NOT (REV_HASH AND REV_BRANCH AND REV_DATE))
     find_package(Git)
 endif()
 

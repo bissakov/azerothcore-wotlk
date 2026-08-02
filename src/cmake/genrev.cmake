@@ -18,7 +18,17 @@ if(NOT BUILDDIR)
   set(BUILDDIR ${CMAKE_BINARY_DIR})
 endif()
 
-if(WITHOUT_GIT)
+if(REV_HASH AND REV_BRANCH AND REV_DATE)
+  # The revision was supplied by whoever invoked CMake rather than read out of a
+  # repository. This is for builds that have no .git to look at: a source
+  # tarball, or a container image built from a context that deliberately leaves
+  # the repository out. All three have to be given, otherwise we fall through to
+  # the normal detection below and report what the repository actually says.
+  set(rev_hash "${REV_HASH}")
+  set(rev_branch "${REV_BRANCH}")
+  set(rev_date "${REV_DATE}")
+  set(rev_date_fallback "${rev_date}")
+elseif(WITHOUT_GIT)
   set(rev_date "1970-01-01 00:00:00 +0000")
   set(rev_hash "unknown")
   set(rev_branch "Archived")

@@ -17,6 +17,20 @@ COMPOSE_DOCKER_CLI_BUILD="1"
 DOCKER_BUILDKIT="1"
 # BUILDKIT_INLINE_CACHE="1"
 
+# The build context leaves the git repository out, so the revision that gets
+# stamped into the binaries has to be passed in as a build arg. docker-compose.yml
+# reads these three from the environment. Anything already exported wins, so a
+# caller can pin a revision; a checkout with no repository just gets the empty
+# defaults and reports itself as "unknown ... (Archived branch)".
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    # Keep the same dirty marker and hash normalization as genrev.cmake.
+    REV_INFO="$(git describe --long --match 0.1 --dirty=+ --abbrev=12 --always)"
+    REV_HASH="$(sed -E 's/^0\.1-//; s/[0-9]+-g//' <<< "$REV_INFO")"
+    export AC_REV_HASH="${AC_REV_HASH:-$REV_HASH}"
+    export AC_REV_BRANCH="${AC_REV_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+    export AC_REV_DATE="${AC_REV_DATE:-$(git show -s --format=%ci)}"
+fi
+
 function usage () {
     cat <<EOF
 Wrapper for shell scripts around docker

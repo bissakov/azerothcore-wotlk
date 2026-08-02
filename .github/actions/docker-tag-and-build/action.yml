@@ -20,6 +20,21 @@ inputs:
 runs:
   using: composite
   steps:
+    # The build context excludes .git, so the revision stamped into the binaries
+    # comes in as a build arg. actions/checkout leaves HEAD detached on pull
+    # requests, so take the branch from the workflow context rather than from
+    # `git rev-parse --abbrev-ref`, which would just say "HEAD".
+    - name: Get revision
+      id: rev
+      shell: bash
+      run: |
+        rev_info="$(git describe --long --match 0.1 --dirty=+ --abbrev=12 --always)"
+        {
+          echo "hash=$(sed -E 's/^0\.1-//; s/[0-9]+-g//' <<< "$rev_info")"
+          echo "branch=${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          echo "date=$(git show -s --format=%ci)"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Get Docker Metadata
       id: meta
       uses: docker/metadata-action@v5
@@ -41,3 +56,6 @@ runs:
           USER_ID=1000
           GROUP_ID=1000
           DOCKER_USER=acore
+          AC_REV_HASH=${{ steps.rev.outputs.hash }}
+          AC_REV_BRANCH=${{ steps.rev.outputs.branch }}
+          AC_REV_DATE=${{ steps.rev.outputs.date }}
