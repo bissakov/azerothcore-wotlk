@@ -51,7 +51,9 @@ services:
       # The LLM provider's bearer token, kept out of the tracked config tree.
       # Set it in .env, which git ignores. Only this one key is passed through,
       # rather than the whole file, so nothing else leaks into the container.
-      AC_OLLAMA_CHAT_API_KEY: "${AC_OLLAMA_CHAT_API_KEY:-}"
+      # LLMChat.ApiKey maps to this name: LLM is one uppercase run, so the AC_
+      # transform keeps LLMCHAT unsplit.
+      AC_LLMCHAT_API_KEY: "${AC_LLMCHAT_API_KEY:-}"
     # mod-ollama-chat talks to an Ollama server running on the host, so give the
     # container a name that resolves to the host's gateway address.
     extra_hosts:
@@ -60,9 +62,9 @@ services:
       # The Playerbots runtime updater needs the module SQL tree, which the
       # worldserver image does not include by default.
       - ./modules/mod-playerbots:/azerothcore/modules/mod-playerbots:ro
-      # mod-ollama-chat reads its RAG corpus from the module tree at runtime,
+      # mod-llm-chat reads its RAG corpus from the module tree at runtime,
       # which the worldserver image also does not include.
-      - ./modules/mod-ollama-chat:/azerothcore/modules/mod-ollama-chat:ro
+      - ./modules/mod-llm-chat:/azerothcore/modules/mod-llm-chat:ro
       # AzerothCore's container entrypoint only creates the main component
       # config, so expose the module's generated default config explicitly.
       - ./env/dist/etc/modules/playerbots.conf.dist:/azerothcore/env/dist/etc/modules/playerbots.conf:ro
