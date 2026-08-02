@@ -1,0 +1,68 @@
+services:
+  ac-database:
+    # MySQL is only used by the other services on ac-network. Do not publish
+    # its root-authenticated port on the host LAN.
+    ports: !reset []
+
+  ac-worldserver:
+    environment:
+      # Player AI is updated by map workers. The upstream default is one,
+      # while this host has eight physical cores.
+      AC_MAP_UPDATE_THREADS: "8"
+      # Emit the core's rolling world-update latency distribution every 30 s.
+      # This is lightweight and remains enabled for normal benchmark runs.
+      AC_RECORD_UPDATE_TIME_DIFF_INTERVAL: "30000"
+      AC_MIN_RECORD_UPDATE_TIME_DIFF: "0"
+      # Begin as an organic level-one realm. Keep enough concurrent characters
+      # for a populated world without crushing the eight starter zones, and
+      # rotate a pool three times larger than peak concurrency.
+      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "${BOT_MIN_COUNT:-600}"
+      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "${BOT_MAX_COUNT:-1000}"
+      AC_AI_PLAYERBOT_ENABLE_PERIODIC_ONLINE_OFFLINE: "1"
+      AC_AI_PLAYERBOT_PERIODIC_ONLINE_OFFLINE_RATIO: "3.0"
+      AC_AI_PLAYERBOT_RANDOM_BOTS_PER_INTERVAL: "${BOT_LOGIN_BATCH:-30}"
+      # Session length per login: 1-8 hours, so bots settle into a zone and
+      # make real progress instead of churning through 20-minute visits.
+      AC_AI_PLAYERBOT_MIN_RANDOM_BOT_IN_WORLD_TIME: "3600"
+      AC_AI_PLAYERBOT_MAX_RANDOM_BOT_IN_WORLD_TIME: "28800"
+      AC_AI_PLAYERBOT_DISABLE_RANDOM_LEVELS: "1"
+      AC_AI_PLAYERBOT_RANDOMBOT_STARTING_LEVEL: "1"
+      AC_AI_PLAYERBOT_RANDOM_BOT_FIXED_LEVEL: "0"
+      # The key is RandomBotXPRate: XPR is one uppercase run, so the AC_ name
+      # transform keeps XPRATE unsplit.
+      AC_AI_PLAYERBOT_RANDOM_BOT_XPRATE: "1.0"
+      AC_AI_PLAYERBOT_PRE_QUESTS: "0"
+      AC_AI_PLAYERBOT_EQUIP_AND_SPEC_PERSISTENCE: "1"
+      AC_AI_PLAYERBOT_DISABLE_DEATH_KNIGHT_LOGIN: "1"
+      # DisableDeathKnightLogin only filters the login list; character creation
+      # honours the core classmask instead, so disable class 6 there (bit 32).
+      AC_CHARACTER_CREATING_DISABLED_CLASS_MASK: "32"
+      # Upstream defaults keep only ~10% of bots active with no real player
+      # nearby and scale that toward zero under load, which leaves most of the
+      # world standing motionless. Run everyone at full activity and rely on
+      # the update-diff telemetry above to catch it if the host can't keep up.
+      AC_AI_PLAYERBOT_BOT_ACTIVE_ALONE: "100"
+      AC_AI_PLAYERBOT_BOT_ACTIVE_ALONE_SMART_SCALE: "0"
+      # Append to the worldserver logs across restarts instead of truncating
+      # them, so post-restart diagnosis keeps the earlier evidence.
+      AC_APPENDER_SERVER: "2,5,0,Server.log,a"
+      AC_APPENDER_PLAYERBOTS: "2,5,0,Playerbots.log,a"
+      AC_APPENDER_ERRORS: "2,2,0,Errors.log,a"
+      # The LLM provider's bearer token, kept out of the tracked config tree.
+      # Set it in .env, which git ignores. Only this one key is passed through,
+      # rather than the whole file, so nothing else leaks into the container.
+      AC_OLLAMA_CHAT_API_KEY: "${AC_OLLAMA_CHAT_API_KEY:-}"
+    # mod-ollama-chat talks to an Ollama server running on the host, so give the
+    # container a name that resolves to the host's gateway address.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # The Playerbots runtime updater needs the module SQL tree, which the
+      # worldserver image does not include by default.
+      - ./modules/mod-playerbots:/azerothcore/modules/mod-playerbots:ro
+      # mod-ollama-chat reads its RAG corpus from the module tree at runtime,
+      # which the worldserver image also does not include.
+      - ./modules/mod-ollama-chat:/azerothcore/modules/mod-ollama-chat:ro
+      # AzerothCore's container entrypoint only creates the main component
+      # config, so expose the module's generated default config explicitly.
+      - ./env/dist/etc/modules/playerbots.conf.dist:/azerothcore/env/dist/etc/modules/playerbots.conf:ro
