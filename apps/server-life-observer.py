@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import datetime as dt
+import fcntl
+import os
 import pathlib
 import re
 import shlex
@@ -14,6 +17,7 @@ import struct
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "var" / "server-life" / "telemetry.sqlite3"
@@ -296,6 +300,37 @@ def dim(text: str) -> str:
 def heading(title: str) -> None:
     print()
     print(bold(title))
+
+
+@contextlib.contextmanager
+def watcher_lock(database: pathlib.Path) -> Iterator[pathlib.Path]:
+    """Exclusively lock a telemetry database for the lifetime of a watcher."""
+    database = database.expanduser().resolve()
+    lock_path = database.with_name(f"{database.name}.watch.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock_file.seek(0)
+            owner = lock_file.read().strip()
+            detail = f"\nowner: {owner}" if owner else ""
+            raise SystemExit(
+                f"cannot start watch for {database}: another watcher holds "
+                f"{lock_path}{detail}"
+            ) from None
+
+        started = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(
+            f"pid={os.getpid()} started={started} command={shlex.join(sys.argv)}\n"
+        )
+        lock_file.flush()
+        yield lock_path
+    finally:
+        lock_file.close()
 
 
 def connect(path: pathlib.Path) -> sqlite3.Connection:
@@ -1452,13 +1487,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    db = connect(args.database)
+    database = args.database.expanduser().resolve()
+    if args.command == "watch":
+        with watcher_lock(database):
+            db = connect(database)
+            watch(db, args.interval, args.stall_hours, args.limit, args.history)
+        return
+
+    db = connect(database)
     if args.command == "sample":
         take_sample(db)
     elif args.command == "report":
         report(db, args.stall_hours, args.limit, args.history)
-    elif args.command == "watch":
-        watch(db, args.interval, args.stall_hours, args.limit, args.history)
     elif args.command == "trend":
         report_trend(db, args.history)
         print()

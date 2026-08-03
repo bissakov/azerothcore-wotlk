@@ -18,6 +18,11 @@ Run a sample every 15 minutes:
 python apps/server-life-observer.py watch --interval 900 --stall-hours 6
 ```
 
+A watcher holds an adjacent `telemetry.sqlite3.watch.lock` file for its lifetime. Starting another watcher for the same
+resolved database path exits immediately and reports the current owner's PID and command. The lock file itself remains
+on disk after shutdown, but it is only metadata; the operating-system lock is released automatically. One-off
+`sample`, `report`, and `trend` commands do not take this lock.
+
 For continuous collection under the user service manager:
 
 ```bash
