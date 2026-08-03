@@ -23,6 +23,8 @@
 #include "MMapMgr.h"
 #include "IVMapMgr.h"
 
+#include <unordered_set>
+
 class Map;
 
 namespace VMAP
@@ -63,10 +65,14 @@ public:
     dtNavMeshQuery const* GetNavMeshQuery();
 
 protected:
+    static uint32 PackTileID(uint32 x, uint32 y) { return x << 16 | y; }
+
     // _navMesh is a shared_ptr as it will point to a parent maps nav mesh (if exists) to save on memory
     std::shared_ptr<dtNavMesh> _navMesh;
     // navMeshQuery is not thread safe and needs its own instance per map
     MMAP::ManagedNavMeshQuery _navMeshQuery;
+    // Tiles remain in the nav mesh for its lifetime, including after their terrain grid is unloaded.
+    std::unordered_set<uint32> _loadedTiles;
 };
 
 // Map collision data holders (dynamic&static vmap, mmaps)

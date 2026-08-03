@@ -65,7 +65,15 @@ int MapCollisionData::LoadMMapTile(uint32 tileX, uint32 tileY)
     if (!DisableMgr::IsPathfindingEnabled(&_map) || !_mmapData._navMesh)
         return MMAP::MMAP_LOAD_RESULT_IGNORED;
 
-    return MMAP::MMapMgr::LoadTile(_mmapData._navMesh.get(), _map.GetId(), tileX, tileY);
+    uint32 const tileId = MMapData::PackTileID(tileX, tileY);
+    if (_mmapData._loadedTiles.contains(tileId))
+        return MMAP::MMAP_LOAD_RESULT_OK;
+
+    if (!MMAP::MMapMgr::LoadTile(_mmapData._navMesh.get(), _map.GetId(), tileX, tileY))
+        return MMAP::MMAP_LOAD_RESULT_ERROR;
+
+    _mmapData._loadedTiles.insert(tileId);
+    return MMAP::MMAP_LOAD_RESULT_OK;
 }
 
 bool StaticVMapCollisionData::isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, VMAP::ModelIgnoreFlags ignoreFlags) const
