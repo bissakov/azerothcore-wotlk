@@ -1,31 +1,33 @@
-name: SQL Codestyle
+name: SQL quality
+
 on:
   pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
+    types: [opened, reopened, synchronize, ready_for_review]
     paths:
-      - data/**
-      - "!README.md"
-      - "!docs/**"
+      - "data/sql/**"
+      - ".sqlfluff"
+      - "apps/ci/check-changed-sql.sh"
+      - "apps/ci/check-sql-safety.py"
+      - ".github/workflows/sql-codestyle.yml"
 
 concurrency:
-  # New commits on a PR cancel the still-running codestyle check on the old
-  # commit. github.ref is refs/pull/<N>/merge, so the group is stable per PR.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  triage:
-    runs-on: ubuntu-latest
-    name: SQL
-    if: github.repository == 'azerothcore/azerothcore-wotlk' && !github.event.pull_request.draft
+  lint:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - name: Setup python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.10'
-      - name: AzerothCore codestyle
-        run: python ./apps/codestyle/codestyle-sql.py
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SQLFluff
+        run: python -m pip install "sqlfluff==3.3.1"
+      - name: Check changed SQL
+        run: |
+          apps/ci/check-changed-sql.sh \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}"

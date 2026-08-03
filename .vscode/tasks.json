@@ -49,9 +49,9 @@
         "problemMatcher": []
       },
       {
-        "label": "AzerothCore: Check codestyle cpp",
+        "label": "AzerothCore: Check changed C++ formatting",
         "type": "shell",
-        "command": "python apps/codestyle/codestyle-cpp.py",
+        "command": "git-clang-format-18 --binary clang-format-18 --diff HEAD",
         "group": "none",
         "presentation": {
           "reveal": "always",
@@ -60,9 +60,9 @@
         "problemMatcher": []
       },
       {
-        "label": "AzerothCore: Check codestyle sql",
+        "label": "AzerothCore: Check changed SQL",
         "type": "shell",
-        "command": "python apps/codestyle/codestyle-sql.py",
+        "command": "apps/ci/check-changed-sql.sh HEAD",
         "group": "none",
         "presentation": {
           "reveal": "always",

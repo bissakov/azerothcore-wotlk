@@ -58,10 +58,11 @@ reviews:
           PlayerScript/WorldScript/etc. and register with new MyClass() in AddSC_().
     - path: "data/sql/updates/pending_db_*/**/*.sql"
       instructions: |
-        AzerothCore SQL update conventions (enforced by apps/codestyle/codestyle-sql.py):
-        - Every INSERT must be preceded by a matching DELETE for idempotency, and that DELETE must include a WHERE clause scoped precisely to the intended rows. A predicate that is too broad will remove unrelated data, so confirm it matches exactly what the INSERT will re-add.
-        - 4-space indent (no tabs), trailing newline, no double semicolons, no multiple blank lines.
-        - Tables must use the InnoDB engine.
+        Fork SQL update conventions (enforced by SQLFluff and apps/ci/check-sql-safety.py):
+        - Follow the explicit rules in .sqlfluff: 4-space indentation, uppercase SQL keywords,
+          trailing commas, a 120-character line limit, semicolon terminators, and a final newline.
+        - Make data migrations safe to reapply when the affected schema requires idempotency.
+        - New or changed tables must use the InnoDB engine.
     - path: "data/sql/base/**"
       instructions: |
         This SQL directory is immutable. Changes here should not happen in a normal PR —
