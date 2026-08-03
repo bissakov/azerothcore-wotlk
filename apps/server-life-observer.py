@@ -68,7 +68,7 @@ PROFESSIONS = PRIMARY_PROFESSIONS | SECONDARY_PROFESSIONS
 # Bump whenever CHARACTER_COLUMNS gains a field. Samples recorded under an
 # older version keep a zero for the new columns, so deltas that cross a version
 # boundary are reported as unavailable instead of as a huge fake gain.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # Per-character telemetry columns, in the order the character query returns
 # them. Adding one here plus the matching expression in CHARACTER_QUERY is
@@ -96,6 +96,9 @@ CHARACTER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("total_kills", "INTEGER NOT NULL DEFAULT 0"),
     ("honor", "INTEGER NOT NULL DEFAULT 0"),
     ("health", "INTEGER NOT NULL DEFAULT 0"),
+    ("death_state", "INTEGER NOT NULL DEFAULT 0"),
+    ("is_ghost", "INTEGER NOT NULL DEFAULT 0"),
+    ("corpse_age", "INTEGER NOT NULL DEFAULT 0"),
     ("instance_id", "INTEGER NOT NULL DEFAULT 0"),
     ("on_taxi", "INTEGER NOT NULL DEFAULT 0"),
     ("rewarded_quests", "INTEGER NOT NULL"),
@@ -115,6 +118,16 @@ CHARACTER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("mails", "INTEGER NOT NULL DEFAULT 0"),
     ("auctions", "INTEGER NOT NULL DEFAULT 0"),
     ("pets", "INTEGER NOT NULL DEFAULT 0"),
+    ("deaths", "INTEGER NOT NULL DEFAULT 0"),
+    ("releases", "INTEGER NOT NULL DEFAULT 0"),
+    ("resurrections", "INTEGER NOT NULL DEFAULT 0"),
+    ("normal_resurrections", "INTEGER NOT NULL DEFAULT 0"),
+    ("spirit_healer_resurrections", "INTEGER NOT NULL DEFAULT 0"),
+    ("total_ghost_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_ghost_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_death", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_release", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_resurrection", "INTEGER NOT NULL DEFAULT 0"),
     ("account_type", "INTEGER NOT NULL"),
 )
 
@@ -124,8 +137,24 @@ SELECT
     c.map, c.zone, c.position_x, c.position_y, c.position_z, c.online,
     c.totaltime, c.leveltime, c.logout_time,
     COALESCE(UNIX_TIMESTAMP(c.creation_date), 0),
-    c.totalKills, c.totalHonorPoints, c.health, c.instance_id,
-    IF(c.taxi_path <> '', 1, 0),
+    c.totalKills, c.totalHonorPoints, c.health,
+    CASE
+        WHEN ds.state = 'ghost' THEN 2
+        WHEN ds.state = 'dead' THEN 1
+        WHEN ds.state = 'alive' THEN 0
+        WHEN (c.playerFlags & 16) <> 0 THEN 2
+        WHEN c.health = 0 THEN 1
+        ELSE 0
+    END,
+    IF(ds.state = 'ghost' OR (ds.bot IS NULL AND (c.playerFlags & 16) <> 0), 1, 0),
+    CASE
+        WHEN ds.state = 'ghost' AND ds.last_release > 0
+            THEN GREATEST(UNIX_TIMESTAMP() - ds.last_release, 0)
+        WHEN ds.bot IS NULL AND (c.playerFlags & 16) <> 0 AND cp.time > 0
+            THEN GREATEST(UNIX_TIMESTAMP() - cp.time, 0)
+        ELSE 0
+    END,
+    c.instance_id, IF(c.taxi_path <> '', 1, 0),
     COALESCE(qr.rewarded_quests, 0), COALESCE(qa.active_quests, 0),
     COALESCE(gm.guildid, 0), COALESCE(grm.group_id, 0),
     COALESCE(sk.skills, 0), COALESCE(sk.professions, 0), COALESCE(sk.profession_skill, 0),
@@ -133,8 +162,13 @@ SELECT
     COALESCE(eq.equipped_items, 0), COALESCE(eq.item_level, 0), COALESCE(eq.item_quality, 0),
     COALESCE(inv.inventory_items, 0),
     COALESCE(ml.mails, 0), COALESCE(au.auctions, 0), COALESCE(pt.pets, 0),
+    COALESCE(ds.deaths, 0), COALESCE(ds.releases, 0), COALESCE(ds.resurrections, 0),
+    COALESCE(ds.normal_resurrections, 0), COALESCE(ds.spirit_healer_resurrections, 0),
+    COALESCE(ds.total_ghost_seconds, 0), COALESCE(ds.last_ghost_seconds, 0),
+    COALESCE(ds.last_death, 0), COALESCE(ds.last_release, 0), COALESCE(ds.last_resurrection, 0),
     COALESCE(pat.account_type, 0)
 FROM acore_characters.characters c
+LEFT JOIN acore_characters.corpse cp ON cp.guid = c.guid
 LEFT JOIN (
     SELECT guid, COUNT(*) AS rewarded_quests
     FROM acore_characters.character_queststatus_rewarded
@@ -196,6 +230,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT owner, COUNT(*) AS pets FROM acore_characters.character_pet GROUP BY owner
 ) pt ON pt.owner = c.guid
+LEFT JOIN acore_playerbots.playerbots_death_stats ds ON ds.bot = c.guid
 LEFT JOIN acore_playerbots.playerbots_account_type pat ON pat.account_id = c.account
 ORDER BY c.guid
 """
@@ -708,6 +743,12 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
         "spells",
         "equipped_items",
         "talents",
+        "deaths",
+        "releases",
+        "resurrections",
+        "normal_resurrections",
+        "spirit_healer_resurrections",
+        "total_ghost_seconds",
     ):
         result[field] = sum(row[field] - was[field] for row, was in both)
     # XP resets on level-up, so levels are counted on their own.
@@ -867,10 +908,12 @@ def report_world(
         )
     in_instance = sum(1 for row in online if row["instance_id"])
     on_taxi = sum(1 for row in online if row["on_taxi"])
-    dead = sum(1 for row in online if row["health"] == 0)
+    bodies = sum(1 for row in online if row["death_state"] == 1)
+    ghosts = sum(1 for row in online if row["is_ghost"])
     print(
         f"  in instances {in_instance:,}   on flight paths {on_taxi:,}"
-        f"   dead or ghost {dead:,}   grouped {sum(1 for row in online if row['group_id']):,}"
+        f"   dead bodies {bodies:,}   ghosts {ghosts:,}"
+        f"   grouped {sum(1 for row in online if row['group_id']):,}"
     )
     if change:
         print(
@@ -878,6 +921,44 @@ def report_world(
             f"   p90 {change['p90_move']:,.0f} yd"
             f"   frozen {change['frozen']:,} of {change['movement_observed']:,} saved"
         )
+
+
+def report_deaths(snap: Snapshot, change: dict[str, float] | None) -> None:
+    heading("Death lifecycle")
+    bots = snap.bots
+    online = snap.online
+    deaths = sum(row["deaths"] for row in bots)
+    releases = sum(row["releases"] for row in bots)
+    resurrections = sum(row["resurrections"] for row in bots)
+    normal = sum(row["normal_resurrections"] for row in bots)
+    spirit = sum(row["spirit_healer_resurrections"] for row in bots)
+    print(
+        f"  persistent totals   deaths {deaths:,}   releases {releases:,}"
+        f"   resurrections {resurrections:,}"
+    )
+    print(
+        f"  resurrection path   corpse/normal {normal:,}"
+        f"   spirit healer {spirit:,}"
+        f"   unresolved {max(deaths - resurrections, 0):,}"
+    )
+    if change and change.get("extended"):
+        gained = max(change["deaths"], 0)
+        played_hours = change["played"] / 3600
+        rate = gained * 100 / played_hours if played_hours else 0
+        print(
+            f"  since previous      deaths {signed(gained)}"
+            f"   releases {signed(max(change['releases'], 0))}"
+            f"   resurrections {signed(max(change['resurrections'], 0))}"
+            f"   {rate:.2f} deaths per 100 bot-hours"
+        )
+    ghost_ages = [row["corpse_age"] for row in online if row["is_ghost"]]
+    print(
+        f"  current             bodies "
+        f"{sum(1 for row in online if row['death_state'] == 1):,}"
+        f"   ghosts {len(ghost_ages):,}"
+        f"   ghost age p50 {duration(median(ghost_ages))}"
+        f" max {duration(max(ghost_ages, default=0))}"
+    )
 
 
 def report_development(snap: Snapshot, names: dict[int, str]) -> None:
@@ -1106,6 +1187,17 @@ def report_watchlist(
             f"ilvl {row['item_level']:.0f}"
         ),
     )
+    stuck_ghosts = [
+        row for row in online if row["is_ghost"] and row["corpse_age"] >= 15 * 60
+    ]
+    show(
+        "ghosts for at least 15 minutes",
+        sorted(stuck_ghosts, key=lambda row: -row["corpse_age"]),
+        lambda row: (
+            f"L{row['level']:<3} ghost {duration(row['corpse_age'])} "
+            f"in {names.get(row['zone'], row['zone'])}"
+        ),
+    )
 
     if previous is not None and change is not None:
         if change["elapsed"] < 300:
@@ -1311,6 +1403,7 @@ def report(
     if baseline and long_run:
         report_progression(snap, baseline, long_run, f"since {stall_hours:g}h baseline")
     report_world(snap, short, names)
+    report_deaths(snap, short)
     report_development(snap, names)
     report_economy(snap, previous)
     report_social(snap, previous)

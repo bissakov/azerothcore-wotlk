@@ -112,6 +112,31 @@ void PlayerbotsDatabaseConnection::DoPrepareStatements()
             "scale_16, scale_17, scale_18, scale_19, scale_20, scale_21, scale_22, scale_23, scale_24, scale_25, scale_26, scale_27, scale_28, scale_29, scale_30, scale_31, scale_32) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(PLAYERBOTS_DEL_EQUIP_CACHE_NEW, "DELETE FROM playerbots_item_info_cache WHERE id = ?", CONNECTION_ASYNC);
+
+    PrepareStatement(
+        PLAYERBOTS_UPS_DEATH_STATS_DEATH,
+        "INSERT INTO playerbots_death_stats (bot, deaths, state, last_death, last_level, last_map, last_zone) "
+        "VALUES (?, 1, 'dead', UNIX_TIMESTAMP(), ?, ?, ?) ON DUPLICATE KEY UPDATE deaths = deaths + 1, "
+        "state = 'dead', last_death = VALUES(last_death), last_level = VALUES(last_level), "
+        "last_map = VALUES(last_map), last_zone = VALUES(last_zone)",
+        CONNECTION_ASYNC);
+    PrepareStatement(PLAYERBOTS_UPS_DEATH_STATS_RELEASE,
+                     "INSERT INTO playerbots_death_stats (bot, releases, state, last_release) "
+                     "VALUES (?, 1, 'ghost', UNIX_TIMESTAMP()) ON DUPLICATE KEY UPDATE releases = releases + 1, "
+                     "state = 'ghost', last_release = VALUES(last_release)",
+                     CONNECTION_ASYNC);
+    PrepareStatement(PLAYERBOTS_UPS_DEATH_STATS_RESURRECTION,
+                     "INSERT INTO playerbots_death_stats (bot, resurrections, normal_resurrections, "
+                     "spirit_healer_resurrections, state, last_resurrection_method, last_resurrection) "
+                     "VALUES (?, 1, ?, ?, 'alive', ?, UNIX_TIMESTAMP()) ON DUPLICATE KEY UPDATE "
+                     "resurrections = resurrections + 1, normal_resurrections = normal_resurrections + "
+                     "VALUES(normal_resurrections), "
+                     "spirit_healer_resurrections = spirit_healer_resurrections + VALUES(spirit_healer_resurrections), "
+                     "last_ghost_seconds = IF(last_release > 0, GREATEST(UNIX_TIMESTAMP() - last_release, 0), 0), "
+                     "total_ghost_seconds = total_ghost_seconds + last_ghost_seconds, state = 'alive', "
+                     "last_resurrection_method = VALUES(last_resurrection_method), "
+                     "last_resurrection = VALUES(last_resurrection)",
+                     CONNECTION_ASYNC);
 }
 
 PlayerbotsDatabaseConnection::PlayerbotsDatabaseConnection(MySQLConnectionInfo& connInfo) : MySQLConnection(connInfo)

@@ -4,8 +4,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/bissa/Games/azeroth/azerothcore-wotlk
-ExecStart=/usr/bin/python3 /home/bissa/Games/azeroth/azerothcore-wotlk/apps/server-life-observer.py watch --interval 900 --stall-hours 6
+WorkingDirectory=%h/Work/Misc/azerothcore-wotlk
+ExecStart=/usr/bin/python3 %h/Work/Misc/azerothcore-wotlk/apps/server-life-observer.py watch --interval 900 --stall-hours 6
 Restart=always
 RestartSec=60
 

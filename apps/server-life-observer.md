@@ -2,7 +2,8 @@
 
 `server-life-observer.py` records read-only snapshots of the running realm from the Docker database and keeps them in
 `var/server-life/telemetry.sqlite3`. The telemetry database is independent of the game databases, so it can be
-retained across realm wipes.
+retained across realm wipes. Bot death counters are persisted by `mod-playerbots`, while each observer snapshot records
+whether an online bot is still a body or has released as a ghost and how long its corpse run has lasted.
 
 Record and inspect a snapshot:
 
@@ -55,12 +56,15 @@ rolling update-diff distribution parsed from `Server.log`, container CPU and mem
   depth (slots filled, item level, share in uncommon or better) and spellbook, talent, pet and bag depth.
 - **Economy and world state** — gold distribution and realm total, auction and mail volume, creature and node respawn
   queues (the mobs-being-killed proxy), instance and battleground counts.
+- **Death lifecycle** — cumulative deaths, releases and resurrections, deaths per 100 bot-hours, corpse versus Spirit
+  Healer recovery, and the age of currently active ghosts.
 - **Social** — guilds with members and the largest one, groups formed, friend lists, and logged LLM conversations.
 - **Organic pace** — where online bots sit relative to the highest human character, and what gold, quests and item
   level that peer band holds.
 - **Watchlist** — high-level bots parked in starter zones, bots still level 1 after an hour played, bots with no quest
   after two hours, bots exceeding the two-primary-profession cap, level 10+ bots in fewer than eight gear slots,
-  frozen bots (saved while online across two samples with no xp and under a yard of movement) and long-horizon stalls.
+  ghosts that have remained unrecovered for at least 15 minutes, frozen bots (saved while online across two samples
+  with no xp and under a yard of movement), and long-horizon stalls.
 - **Recent samples** — one line per sample with online count, level percentiles, quests, gold, respawn queue, update
   diff and levels per hour, so the last few hours are readable without touching the database.
 
