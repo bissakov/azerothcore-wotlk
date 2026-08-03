@@ -14,6 +14,9 @@ Compose is a supported deployment path.
   work. Use a tracked module or an explicitly requested core change instead.
 - State whether a substantial change is fork-only, intended to remain easy to rebase, or a
   candidate for upstreaming. Do not impose upstream contribution policy on fork-only work.
+- Never add attributions to AI agents (or any automated tooling) in commit messages, PR
+  descriptions, code comments, changelogs, or any tracked content. Changes are authored by the
+  contributor; do not reference the assistant or its involvement anywhere.
 
 ## Safety and data rules
 
