@@ -72,7 +72,7 @@ PROFESSIONS = PRIMARY_PROFESSIONS | SECONDARY_PROFESSIONS
 # Bump whenever CHARACTER_COLUMNS gains a field. Samples recorded under an
 # older version keep a zero for the new columns, so deltas that cross a version
 # boundary are reported as unavailable instead of as a huge fake gain.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Per-character telemetry columns, in the order the character query returns
 # them. Adding one here plus the matching expression in CHARACTER_QUERY is
@@ -107,6 +107,7 @@ CHARACTER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("on_taxi", "INTEGER NOT NULL DEFAULT 0"),
     ("rewarded_quests", "INTEGER NOT NULL"),
     ("active_quests", "INTEGER NOT NULL"),
+    ("quest_objectives", "INTEGER NOT NULL DEFAULT 0"),
     ("guild_id", "INTEGER NOT NULL DEFAULT 0"),
     ("group_id", "INTEGER NOT NULL DEFAULT 0"),
     ("skills", "INTEGER NOT NULL DEFAULT 0"),
@@ -160,6 +161,7 @@ SELECT
     END,
     c.instance_id, IF(c.taxi_path <> '', 1, 0),
     COALESCE(qr.rewarded_quests, 0), COALESCE(qa.active_quests, 0),
+    COALESCE(qa.quest_objectives, 0),
     COALESCE(gm.guildid, 0), COALESCE(grm.group_id, 0),
     COALESCE(sk.skills, 0), COALESCE(sk.professions, 0), COALESCE(sk.profession_skill, 0),
     COALESCE(sp.spells, 0), COALESCE(tal.talents, 0), COALESCE(ach.achievements, 0),
@@ -180,7 +182,15 @@ LEFT JOIN (
     GROUP BY guid
 ) qr ON qr.guid = c.guid
 LEFT JOIN (
-    SELECT guid, COUNT(*) AS active_quests
+    SELECT
+        guid,
+        COUNT(*) AS active_quests,
+        COALESCE(SUM(
+            status + explored +
+            mobcount1 + mobcount2 + mobcount3 + mobcount4 +
+            itemcount1 + itemcount2 + itemcount3 + itemcount4 + itemcount5 + itemcount6 +
+            playercount
+        ), 0) AS quest_objectives
     FROM acore_characters.character_queststatus
     GROUP BY guid
 ) qa ON qa.guid = c.guid
@@ -283,6 +293,7 @@ REALM_METRICS: tuple[tuple[str, str, str], ...] = (
     ),
 )
 BOT_EVENT_TABLE = "acore_playerbots.playerbots_random_bots"
+RECOVERY_STALL_SECONDS = 30 * 60
 
 
 def is_tty() -> bool:
@@ -766,6 +777,8 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
             for (row, was), moved_yd in zip(movement_observed, moved)
             if row["level"] == was["level"]
             and row["xp"] == was["xp"]
+            and row["rewarded_quests"] == was["rewarded_quests"]
+            and row["quest_objectives"] == was["quest_objectives"]
             and moved_yd < 1.0
         ),
     }
@@ -951,10 +964,15 @@ def report_world(
         f"   grouped {sum(1 for row in online if row['group_id']):,}"
     )
     if change:
+        frozen = (
+            f"   frozen {change['frozen']:,} of "
+            f"{change['movement_observed']:,} saved"
+            if change["extended"]
+            else "   frozen check unavailable across telemetry schemas"
+        )
         print(
             f"  movement since previous sample   median {change['median_move']:,.0f} yd"
-            f"   p90 {change['p90_move']:,.0f} yd"
-            f"   frozen {change['frozen']:,} of {change['movement_observed']:,} saved"
+            f"   p90 {change['p90_move']:,.0f} yd{frozen}"
         )
 
 
@@ -1159,7 +1177,8 @@ def report_watchlist(
     snap: Snapshot,
     previous: Snapshot | None,
     change: dict[str, float] | None,
-    baseline: Snapshot | None,
+    recovery_baseline: Snapshot | None,
+    stall_baseline: Snapshot | None,
     stall_hours: float,
     limit: int,
     names: dict[int, str],
@@ -1182,29 +1201,60 @@ def report_watchlist(
         sorted(high_starters, key=lambda row: -row["level"]),
         lambda row: f"L{row['level']:<3} {names.get(row['zone'], row['zone'])}",
     )
-    idle_level_one = [
-        row for row in online if row["level"] == 1 and row["total_time"] >= 3600
-    ]
-    show(
-        "still level 1 after an hour played",
-        sorted(idle_level_one, key=lambda row: -row["total_time"]),
-        lambda row: (
-            f"played {duration(row['total_time'])} quests {row['rewarded_quests']}"
-        ),
-    )
-    questless = [
-        row
-        for row in online
-        if row["total_time"] >= 7200 and row["rewarded_quests"] == 0
-    ]
-    show(
-        "no quest ever completed after two hours played",
-        sorted(questless, key=lambda row: -row["total_time"]),
-        lambda row: (
-            f"L{row['level']:<3} played {duration(row['total_time'])} "
-            f"in {names.get(row['zone'], row['zone'])}"
-        ),
-    )
+    def recently_stalled(row: sqlite3.Row) -> bool:
+        if recovery_baseline is None:
+            return False
+        was = recovery_baseline.by_guid.get(row["guid"])
+        if was is None or not was["online"]:
+            return False
+        played = row["total_time"] - was["total_time"]
+        no_progress = (
+            row["level"] == was["level"]
+            and row["xp"] == was["xp"]
+            and row["rewarded_quests"] == was["rewarded_quests"]
+            and row["quest_objectives"] == was["quest_objectives"]
+        )
+        return played > 0 and no_progress and displacement(row, was) < 10.0
+
+    if recovery_baseline is None:
+        print(
+            dim(
+                "  current low-level stall checks need 30 minutes of this "
+                "telemetry schema and worldserver run"
+            )
+        )
+    else:
+        observed = duration(snap.at - recovery_baseline.at)
+        idle_level_one = [
+            row
+            for row in online
+            if row["level"] == 1
+            and row["total_time"] >= 3600
+            and recently_stalled(row)
+        ]
+        show(
+            f"level 1 after an hour played and stalled over {observed}",
+            sorted(idle_level_one, key=lambda row: -row["total_time"]),
+            lambda row: (
+                f"played {duration(row['total_time'])} quests "
+                f"{row['rewarded_quests']}"
+            ),
+        )
+        questless = [
+            row
+            for row in online
+            if row["total_time"] >= 7200
+            and row["rewarded_quests"] == 0
+            and recently_stalled(row)
+        ]
+        show(
+            f"questless after two hours and stalled over {observed}",
+            sorted(questless, key=lambda row: -row["total_time"]),
+            lambda row: (
+                f"L{row['level']:<3} played {duration(row['total_time'])} "
+                f"in {names.get(row['zone'], row['zone'])}"
+            ),
+        )
     profession_overflow = [row for row in snap.bots if row["professions"] > 2]
     show(
         "more than two primary professions",
@@ -1223,10 +1273,10 @@ def report_watchlist(
         ),
     )
     stuck_ghosts = [
-        row for row in online if row["is_ghost"] and row["corpse_age"] >= 15 * 60
+        row for row in online if row["is_ghost"] and row["corpse_age"] >= 20 * 60
     ]
     show(
-        "ghosts for at least 15 minutes",
+        "ghosts at or beyond the 20-minute recovery deadline",
         sorted(stuck_ghosts, key=lambda row: -row["corpse_age"]),
         lambda row: (
             f"L{row['level']:<3} ghost {duration(row['corpse_age'])} "
@@ -1235,7 +1285,9 @@ def report_watchlist(
     )
 
     if previous is not None and change is not None:
-        if change["elapsed"] < 300:
+        if not change["extended"]:
+            print(dim("  frozen check skipped: telemetry schema changed"))
+        elif change["elapsed"] < 300:
             print(dim("  frozen check skipped: samples less than five minutes apart"))
         elif (
             snap.sample["worldserver_started_at"]
@@ -1254,11 +1306,15 @@ def report_watchlist(
                 and row["total_time"] > previous.by_guid[row["guid"]]["total_time"]
                 and row["level"] == previous.by_guid[row["guid"]]["level"]
                 and row["xp"] == previous.by_guid[row["guid"]]["xp"]
+                and row["rewarded_quests"]
+                == previous.by_guid[row["guid"]]["rewarded_quests"]
+                and row["quest_objectives"]
+                == previous.by_guid[row["guid"]]["quest_objectives"]
                 and displacement(row, previous.by_guid[row["guid"]]) < 1.0
             ]
             print(
                 f"  frozen over the last {duration(change['elapsed'])}"
-                f" (saved while online, no xp, moved under a yard):"
+                f" (saved while online, no progress, moved under a yard):"
                 f" {len(frozen):,} of {change['movement_observed']:,} saved"
             )
             by_zone: dict[int, int] = {}
@@ -1267,14 +1323,19 @@ def report_watchlist(
             for zone, count in sorted(by_zone.items(), key=lambda item: -item[1])[:8]:
                 print(f"    {names.get(zone, f'zone {zone}'):<26} {count:,}")
 
-    if baseline is None:
-        print(dim(f"  stall check needs a sample at least {stall_hours:g}h older"))
+    if stall_baseline is None:
+        print(
+            dim(
+                f"  {stall_hours:g}h stall check needs that much uninterrupted "
+                "telemetry and worldserver uptime"
+            )
+        )
         return
-    elapsed = snap.at - baseline.at
+    elapsed = snap.at - stall_baseline.at
     minimum_played = int(stall_hours * 3600 * 0.5)
     stalled = []
     for row in snap.bots:
-        was = baseline.by_guid.get(row["guid"])
+        was = stall_baseline.by_guid.get(row["guid"])
         if was is None or row["total_time"] - was["total_time"] < minimum_played:
             continue
         moved = displacement(row, was)
@@ -1282,15 +1343,16 @@ def report_watchlist(
             row["level"] == was["level"]
             and row["xp"] == was["xp"]
             and row["rewarded_quests"] == was["rewarded_quests"]
+            and row["quest_objectives"] == was["quest_objectives"]
         )
-        if no_progress or moved < 10.0:
+        if no_progress and moved < 10.0:
             stalled.append((row, was, moved))
     stalled.sort(
         key=lambda item: item[0]["total_time"] - item[1]["total_time"], reverse=True
     )
     print(
         f"  stalled over {duration(elapsed)}"
-        f" (played but made no progress, or moved under ten yards): {len(stalled):,}"
+        f" (played, made no progress and moved under ten yards): {len(stalled):,}"
     )
     for row, was, moved in stalled[:limit]:
         print(
@@ -1393,16 +1455,10 @@ def latest_sample(db: sqlite3.Connection) -> sqlite3.Row:
 
 
 def previous_sample(db: sqlite3.Connection, latest: sqlite3.Row) -> sqlite3.Row | None:
-    return db.execute(
-        "SELECT * FROM samples WHERE sample_id < ? ORDER BY sample_id DESC LIMIT 1",
-        (latest["sample_id"],),
-    ).fetchone()
-
-
-def baseline_sample(
-    db: sqlite3.Connection, latest: sqlite3.Row, hours: float
-) -> sqlite3.Row | None:
-    target = latest["sampled_at"] - int(hours * 3600)
+    # Manual samples and a watcher left running during an observer upgrade can
+    # produce adjacent snapshots only seconds apart. They make rates meaningless
+    # and cannot support the five-minute frozen check.
+    target = latest["sampled_at"] - 5 * 60
     return db.execute(
         """
         SELECT * FROM samples
@@ -1410,6 +1466,28 @@ def baseline_sample(
         ORDER BY sampled_at DESC LIMIT 1
         """,
         (target, latest["sample_id"]),
+    ).fetchone()
+
+
+def baseline_sample(
+    db: sqlite3.Connection,
+    latest: sqlite3.Row,
+    hours: float,
+    same_worldserver_run: bool = False,
+) -> sqlite3.Row | None:
+    target = latest["sampled_at"] - int(hours * 3600)
+    run_filter = ""
+    parameters: list[object] = [target, latest["sample_id"]]
+    if same_worldserver_run:
+        run_filter = "AND worldserver_started_at IS ?"
+        parameters.append(latest["worldserver_started_at"])
+    return db.execute(
+        f"""
+        SELECT * FROM samples
+        WHERE sampled_at <= ? AND sample_id < ? {run_filter}
+        ORDER BY sampled_at DESC LIMIT 1
+        """,
+        parameters,
     ).fetchone()
 
 
@@ -1422,6 +1500,20 @@ def report(
     previous = Snapshot(db, previous_row) if previous_row else None
     baseline_row = baseline_sample(db, latest, stall_hours)
     baseline = Snapshot(db, baseline_row) if baseline_row else None
+    recovery_baseline_row = baseline_sample(
+        db, latest, RECOVERY_STALL_SECONDS / 3600, same_worldserver_run=True
+    )
+    recovery_baseline = (
+        Snapshot(db, recovery_baseline_row) if recovery_baseline_row else None
+    )
+    if recovery_baseline and recovery_baseline.version != snap.version:
+        recovery_baseline = None
+    stall_baseline_row = baseline_sample(
+        db, latest, stall_hours, same_worldserver_run=True
+    )
+    stall_baseline = Snapshot(db, stall_baseline_row) if stall_baseline_row else None
+    if stall_baseline and stall_baseline.version != snap.version:
+        stall_baseline = None
     names = zone_names(db)
 
     short = compare(snap, previous) if previous else None
@@ -1443,7 +1535,16 @@ def report(
     report_economy(snap, previous)
     report_social(snap, previous)
     report_organic_pace(snap)
-    report_watchlist(snap, previous, short, baseline, stall_hours, limit, names)
+    report_watchlist(
+        snap,
+        previous,
+        short,
+        recovery_baseline,
+        stall_baseline,
+        stall_hours,
+        limit,
+        names,
+    )
     if history:
         report_trend(db, history)
 
@@ -1491,20 +1592,33 @@ def main() -> None:
     if args.command == "watch":
         with watcher_lock(database):
             db = connect(database)
-            watch(db, args.interval, args.stall_hours, args.limit, args.history)
+            try:
+                watch(db, args.interval, args.stall_hours, args.limit, args.history)
+            finally:
+                db.close()
         return
 
     db = connect(database)
-    if args.command == "sample":
-        take_sample(db)
-    elif args.command == "report":
-        report(db, args.stall_hours, args.limit, args.history)
-    elif args.command == "trend":
-        report_trend(db, args.history)
-        print()
-    elif args.command == "zones":
-        print(f"cached {refresh_zones(db, force=True):,} zone names")
+    try:
+        if args.command == "sample":
+            take_sample(db)
+        elif args.command == "report":
+            report(db, args.stall_hours, args.limit, args.history)
+        elif args.command == "trend":
+            report_trend(db, args.history)
+            print()
+        elif args.command == "zones":
+            print(f"cached {refresh_zones(db, force=True):,} zone names")
+    finally:
+        db.close()
+
+
+def entrypoint() -> None:
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nServer life observer stopped.", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    main()
+    entrypoint()
