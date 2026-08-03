@@ -15,7 +15,6 @@ import subprocess
 import sys
 import time
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "var" / "server-life" / "telemetry.sqlite3"
 COMPOSE_FILES = ("docker-compose.yml", "docker-compose.override.yml")
@@ -157,8 +156,8 @@ LEFT JOIN (
     SELECT
         guid,
         COUNT(*) AS skills,
-        SUM(skill IN ({','.join(map(str, PRIMARY_PROFESSIONS))})) AS professions,
-        SUM(IF(skill IN ({','.join(map(str, PRIMARY_PROFESSIONS))}), value, 0)) AS profession_skill
+        SUM(skill IN ({",".join(map(str, PRIMARY_PROFESSIONS))})) AS professions,
+        SUM(IF(skill IN ({",".join(map(str, PRIMARY_PROFESSIONS))}), value, 0)) AS profession_skill
     FROM acore_characters.character_skills
     GROUP BY guid
 ) sk ON sk.guid = c.guid
@@ -204,7 +203,7 @@ ORDER BY c.guid
 SKILL_QUERY = f"""
 SELECT s.skill, COUNT(*), ROUND(AVG(s.value), 1), MAX(s.value)
 FROM acore_characters.character_skills s
-WHERE s.skill IN ({','.join(map(str, PROFESSIONS))})
+WHERE s.skill IN ({",".join(map(str, PROFESSIONS))})
 GROUP BY s.skill
 """
 
@@ -218,7 +217,11 @@ REALM_METRICS: tuple[tuple[str, str, str], ...] = (
     ("group_members", "acore_characters.group_member", "COUNT(*)"),
     ("friends", "acore_characters.character_social", "COUNT(*)"),
     ("auctions", "acore_characters.auctionhouse", "COUNT(*)"),
-    ("auction_buyout", "acore_characters.auctionhouse", "COALESCE(SUM(buyoutprice), 0)"),
+    (
+        "auction_buyout",
+        "acore_characters.auctionhouse",
+        "COALESCE(SUM(buyoutprice), 0)",
+    ),
     ("mails", "acore_characters.mail", "COUNT(*)"),
     ("mail_money", "acore_characters.mail", "COALESCE(SUM(money), 0)"),
     ("corpses", "acore_characters.corpse", "COUNT(*)"),
@@ -229,8 +232,16 @@ REALM_METRICS: tuple[tuple[str, str, str], ...] = (
     ("battlegrounds", "acore_characters.pvpstats_battlegrounds", "COUNT(*)"),
     ("pets", "acore_characters.character_pet", "COUNT(*)"),
     ("chat_messages", "acore_characters.mod_ollama_chat_history", "COUNT(*)"),
-    ("chat_sentiments", "acore_characters.mod_ollama_chat_bot_player_sentiments", "COUNT(*)"),
-    ("chat_relationships", "acore_characters.mod_ollama_chat_relationship_memory", "COUNT(*)"),
+    (
+        "chat_sentiments",
+        "acore_characters.mod_ollama_chat_bot_player_sentiments",
+        "COUNT(*)",
+    ),
+    (
+        "chat_relationships",
+        "acore_characters.mod_ollama_chat_relationship_memory",
+        "COUNT(*)",
+    ),
 )
 BOT_EVENT_TABLE = "acore_playerbots.playerbots_random_bots"
 
@@ -322,7 +333,11 @@ def add_missing_columns(
     for name, decl in columns:
         if name in existing:
             continue
-        decl = decl.replace("NOT NULL", "NOT NULL DEFAULT 0") if "DEFAULT" not in decl else decl
+        decl = (
+            decl.replace("NOT NULL", "NOT NULL DEFAULT 0")
+            if "DEFAULT" not in decl
+            else decl
+        )
         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
@@ -331,7 +346,17 @@ def compose_exec(service: str, command: str) -> subprocess.CompletedProcess[str]
     for compose_file in COMPOSE_FILES:
         compose_args.extend(("-f", compose_file))
     return subprocess.run(
-        ["docker", "compose", *compose_args, "exec", "-T", service, "sh", "-lc", command],
+        [
+            "docker",
+            "compose",
+            *compose_args,
+            "exec",
+            "-T",
+            service,
+            "sh",
+            "-lc",
+            command,
+        ],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -344,7 +369,17 @@ def compose_exec_binary(service: str, command: str) -> bytes | None:
     for compose_file in COMPOSE_FILES:
         compose_args.extend(("-f", compose_file))
     result = subprocess.run(
-        ["docker", "compose", *compose_args, "exec", "-T", service, "sh", "-lc", command],
+        [
+            "docker",
+            "compose",
+            *compose_args,
+            "exec",
+            "-T",
+            service,
+            "sh",
+            "-lc",
+            command,
+        ],
         cwd=ROOT,
         capture_output=True,
         check=False,
@@ -466,15 +501,22 @@ def refresh_zones(db: sqlite3.Connection, force: bool = False) -> int:
         return 0
     payload = compose_exec_binary(WORLDSERVER, f"cat {AREA_TABLE}")
     if not payload or payload[:4] != b"WDBC":
-        print("zones: AreaTable.dbc unavailable; falling back to numeric ids", file=sys.stderr)
+        print(
+            "zones: AreaTable.dbc unavailable; falling back to numeric ids",
+            file=sys.stderr,
+        )
         return 0
-    _, record_count, field_count, record_size, _ = struct.unpack("<4siiii", payload[:20])
+    _, record_count, field_count, record_size, _ = struct.unpack(
+        "<4siiii", payload[:20]
+    )
     body = 20
     strings = body + record_count * record_size
     rows = []
     for index in range(record_count):
         offset = body + index * record_size
-        record = struct.unpack(f"<{field_count}i", payload[offset : offset + record_size])
+        record = struct.unpack(
+            f"<{field_count}i", payload[offset : offset + record_size]
+        )
         area_id, map_id, parent = record[0], record[1], record[2]
         name_offset = strings + record[11]
         end = payload.index(b"\x00", name_offset)
@@ -525,7 +567,9 @@ def take_sample(db: sqlite3.Connection) -> int:
         ((sample_id, *row) for row in skill_rows),
     )
     db.commit()
-    print(f"sample {sample_id}: {len(rows)} characters, {len(metrics)} metrics at {iso}")
+    print(
+        f"sample {sample_id}: {len(rows)} characters, {len(metrics)} metrics at {iso}"
+    )
     return sample_id
 
 
@@ -650,7 +694,9 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
         "frozen": sum(
             1
             for (row, was), moved_yd in zip(movement_observed, moved)
-            if row["level"] == was["level"] and row["xp"] == was["xp"] and moved_yd < 1.0
+            if row["level"] == was["level"]
+            and row["xp"] == was["xp"]
+            and moved_yd < 1.0
         ),
     }
     for field in (
@@ -670,7 +716,9 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
     return result
 
 
-def leaders(new: Snapshot, old: Snapshot, limit: int) -> list[tuple[sqlite3.Row, int, int]]:
+def leaders(
+    new: Snapshot, old: Snapshot, limit: int
+) -> list[tuple[sqlite3.Row, int, int]]:
     scored = []
     for row in new.bots:
         was = old.by_guid.get(row["guid"])
@@ -695,7 +743,9 @@ def report_population(snap: Snapshot, change: dict[str, float] | None) -> None:
             f"   {signed(change['logins'])} in / {signed(-change['logouts'])} out"
             f"   {signed(change['new_characters'])} new characters"
         )
-    print(f"  random bots   {total:>6,} created   {len(online):>5,} online ({share:.0f}%){churn}")
+    print(
+        f"  random bots   {total:>6,} created   {len(online):>5,} online ({share:.0f}%){churn}"
+    )
     print(
         f"  addclass      {len(snap.addclass):>6,} created   "
         f"{sum(1 for row in snap.addclass if row['online']):>5,} online"
@@ -720,9 +770,9 @@ def report_population(snap: Snapshot, change: dict[str, float] | None) -> None:
     width = 1 if ceiling <= 12 else 5 if ceiling <= 40 else 10
     buckets: dict[int, int] = {}
     for level in all_levels:
-        buckets[(level - 1) // width * width + 1] = buckets.get(
-            (level - 1) // width * width + 1, 0
-        ) + 1
+        buckets[(level - 1) // width * width + 1] = (
+            buckets.get((level - 1) // width * width + 1, 0) + 1
+        )
     peak = max(buckets.values(), default=0)
     print(dim("  level spread (every bot character)"))
     for floor in sorted(buckets):
@@ -730,7 +780,9 @@ def report_population(snap: Snapshot, change: dict[str, float] | None) -> None:
         print(f"    {label:>7}  {bar(buckets[floor], peak):<28} {buckets[floor]:>6,}")
 
     alliance = sum(1 for row in online if row["race"] in ALLIANCE_RACES)
-    print(f"  factions online   Alliance {alliance:,}   Horde {len(online) - alliance:,}")
+    print(
+        f"  factions online   Alliance {alliance:,}   Horde {len(online) - alliance:,}"
+    )
     counts: dict[int, int] = {}
     for row in online:
         counts[row["class"]] = counts.get(row["class"], 0) + 1
@@ -783,7 +835,9 @@ def report_progression(
         )
 
 
-def report_world(snap: Snapshot, change: dict[str, float] | None, names: dict[int, str]) -> None:
+def report_world(
+    snap: Snapshot, change: dict[str, float] | None, names: dict[int, str]
+) -> None:
     heading("World activity")
     online = snap.online
     zones: dict[int, list[int]] = {}
@@ -796,9 +850,17 @@ def report_world(snap: Snapshot, change: dict[str, float] | None, names: dict[in
         f"   maps {len({row['map'] for row in online})}"
     )
     peak = max((len(levels) for levels in zones.values()), default=0)
-    for zone, levels in sorted(zones.items(), key=lambda item: len(item[1]), reverse=True)[:12]:
+    for zone, levels in sorted(
+        zones.items(), key=lambda item: len(item[1]), reverse=True
+    )[:12]:
         name = names.get(zone, f"zone {zone}")
-        tag = " (starter)" if zone in STARTER_ZONES else " (capital)" if zone in CAPITAL_ZONES else ""
+        tag = (
+            " (starter)"
+            if zone in STARTER_ZONES
+            else " (capital)"
+            if zone in CAPITAL_ZONES
+            else ""
+        )
         print(
             f"    {name + tag:<26} {bar(len(levels), peak, 20):<20} {len(levels):>5,}"
             f"   L{min(levels)}-{max(levels)} p50 {median(levels):.0f}"
@@ -995,7 +1057,9 @@ def report_watchlist(
 
     online = snap.online
     high_starters = [
-        row for row in snap.non_humans if row["level"] >= 20 and row["zone"] in STARTER_ZONES
+        row
+        for row in snap.non_humans
+        if row["level"] >= 20 and row["zone"] in STARTER_ZONES
     ]
     show(
         "high-level bots parked in starter zones",
@@ -1008,7 +1072,9 @@ def report_watchlist(
     show(
         "still level 1 after an hour played",
         sorted(idle_level_one, key=lambda row: -row["total_time"]),
-        lambda row: f"played {duration(row['total_time'])} quests {row['rewarded_quests']}",
+        lambda row: (
+            f"played {duration(row['total_time'])} quests {row['rewarded_quests']}"
+        ),
     )
     questless = [
         row
@@ -1018,21 +1084,27 @@ def report_watchlist(
     show(
         "no quest ever completed after two hours played",
         sorted(questless, key=lambda row: -row["total_time"]),
-        lambda row: f"L{row['level']:<3} played {duration(row['total_time'])} "
-        f"in {names.get(row['zone'], row['zone'])}",
+        lambda row: (
+            f"L{row['level']:<3} played {duration(row['total_time'])} "
+            f"in {names.get(row['zone'], row['zone'])}"
+        ),
     )
     profession_overflow = [row for row in snap.bots if row["professions"] > 2]
     show(
         "more than two primary professions",
-        sorted(profession_overflow, key=lambda row: (-row["professions"], -row["level"])),
+        sorted(
+            profession_overflow, key=lambda row: (-row["professions"], -row["level"])
+        ),
         lambda row: f"L{row['level']:<3} {row['professions']} primary professions",
     )
     naked = [row for row in online if row["level"] >= 10 and row["equipped_items"] < 8]
     show(
         "level 10+ wearing fewer than eight items",
         sorted(naked, key=lambda row: row["equipped_items"]),
-        lambda row: f"L{row['level']:<3} {row['equipped_items']} slots "
-        f"ilvl {row['item_level']:.0f}",
+        lambda row: (
+            f"L{row['level']:<3} {row['equipped_items']} slots "
+            f"ilvl {row['item_level']:.0f}"
+        ),
     )
 
     if previous is not None and change is not None:
@@ -1041,7 +1113,8 @@ def report_watchlist(
         elif (
             snap.sample["worldserver_started_at"]
             and previous.sample["worldserver_started_at"]
-            and snap.sample["worldserver_started_at"] != previous.sample["worldserver_started_at"]
+            and snap.sample["worldserver_started_at"]
+            != previous.sample["worldserver_started_at"]
         ):
             print(dim("  frozen check skipped: worldserver restarted between samples"))
         else:
@@ -1085,7 +1158,9 @@ def report_watchlist(
         )
         if no_progress or moved < 10.0:
             stalled.append((row, was, moved))
-    stalled.sort(key=lambda item: (item[0]["total_time"] - item[1]["total_time"]), reverse=True)
+    stalled.sort(
+        key=lambda item: item[0]["total_time"] - item[1]["total_time"], reverse=True
+    )
     print(
         f"  stalled over {duration(elapsed)}"
         f" (played but made no progress, or moved under ten yards): {len(stalled):,}"
@@ -1211,7 +1286,9 @@ def baseline_sample(
     ).fetchone()
 
 
-def report(db: sqlite3.Connection, stall_hours: float, limit: int, history: int) -> None:
+def report(
+    db: sqlite3.Connection, stall_hours: float, limit: int, history: int
+) -> None:
     latest = latest_sample(db)
     snap = Snapshot(db, latest)
     previous_row = previous_sample(db, latest)
@@ -1241,7 +1318,6 @@ def report(db: sqlite3.Connection, stall_hours: float, limit: int, history: int)
     report_watchlist(snap, previous, short, baseline, stall_hours, limit, names)
     if history:
         report_trend(db, history)
-    print("\n\n")
 
 
 def watch(
@@ -1252,6 +1328,7 @@ def watch(
         report(db, stall_hours, limit, history)
         print(f"Next sample in {interval}s", flush=True)
         time.sleep(interval)
+        print("\n\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1266,13 +1343,17 @@ def parse_args() -> argparse.Namespace:
         sub = subparsers.add_parser(name, help=help_text)
         sub.add_argument("--stall-hours", type=float, default=6)
         sub.add_argument("--limit", type=int, default=10)
-        sub.add_argument("--history", type=int, default=8, help="samples in the trend table")
+        sub.add_argument(
+            "--history", type=int, default=8, help="samples in the trend table"
+        )
         if name == "watch":
             sub.add_argument("--interval", type=int, default=900)
-    subparsers.add_parser("trend", help="print the recent-sample table only").add_argument(
-        "--history", type=int, default=24
+    subparsers.add_parser(
+        "trend", help="print the recent-sample table only"
+    ).add_argument("--history", type=int, default=24)
+    subparsers.add_parser(
+        "zones", help="re-read zone names from the client AreaTable.dbc"
     )
-    subparsers.add_parser("zones", help="re-read zone names from the client AreaTable.dbc")
     return parser.parse_args()
 
 
