@@ -600,7 +600,9 @@ AiPlayerbot.AutoGearScoreLimit = 0
 # "raid" (bots use certain cheats implemented into raid strategies)
 # To use multiple cheats, separate them by commas below (e.g., to enable all, use "gold,health,mana,power,raid,taxi")
 # Default: food, taxi, and raid are enabled
-AiPlayerbot.BotCheats = "food,taxi,raid"
+# Enabled here: raid-only encounter workarounds remain, but organic bots consume
+# their own food and discover flight paths like players.
+AiPlayerbot.BotCheats = "raid"
 
 # List of attunement quests (comma-separated list of quest IDs) that are automatically completed for all bots.
 # While mod-playerbots does not restore removed attunement requirements, other mods, such as mod-individual-progression, may do so.
@@ -1004,16 +1006,17 @@ AiPlayerbot.AutoLearnTrainerSpells = 1
 # Default: 1 (enabled)
 AiPlayerbot.AutoPickTalents = 1
 
-# Randombots earn their power instead of being handed it on levelup. When enabled:
-#   - trainer spells are no longer granted for free on levelup (AiPlayerbot.AutoLearnTrainerSpells);
-#     the hardcoded baseline class spells a bot needs to function are still granted
-#   - equipment is no longer materialized on levelup (AiPlayerbot.AutoUpgradeEquip)
-#   - the AiPlayerbot.RandomBotSpellIds list is no longer granted
-# Consumables, mounts and AiPlayerbot.AutoEquipUpgradeLoot (equipping upgrades the bot actually looted)
-# are unaffected.
+# Randombots earn their character state instead of having the factory rebuild it. When enabled:
+#   - factory/randomize/refresh paths preserve earned skills, spells, quests, inventory and equipment
+#   - class, trainer, class-quest and RandomBotSpellIds spells are not granted for free
+#   - professions, weapon skill, pets, mounts, reputation, glyphs, enchants, attunements, guilds and arena teams
+#     are not initialized
+#   - ammo, food, potions, reagents, profession tools and other consumables are not materialized
+#   - level-up maintenance does not teleport or restock the bot
+# AiPlayerbot.AutoEquipUpgradeLoot is unaffected: bots still equip upgrades they actually looted.
 # Default: 0 (disabled)
 # Enabled here: this realm begins at level one with random levels disabled, so bots are meant to
-# earn their power by playing rather than receive it on every levelup.
+# earn their power by playing rather than receive it from maintenance.
 AiPlayerbot.OrganicProgression = 1
 
 # Spells every randombot will learn automatically and every altbot will learn with maintenance

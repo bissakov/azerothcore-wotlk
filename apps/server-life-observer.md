@@ -59,16 +59,16 @@ rolling update-diff distribution parsed from `Server.log`, container CPU and mem
 - **Organic pace** — where online bots sit relative to the highest human character, and what gold, quests and item
   level that peer band holds.
 - **Watchlist** — high-level bots parked in starter zones, bots still level 1 after an hour played, bots with no quest
-  after two hours, level 10+ bots in fewer than eight gear slots, frozen bots (online across two samples with no xp and
-  under a yard of movement) and long-horizon stalls.
+  after two hours, bots exceeding the two-primary-profession cap, level 10+ bots in fewer than eight gear slots,
+  frozen bots (saved while online across two samples with no xp and under a yard of movement) and long-horizon stalls.
 - **Recent samples** — one line per sample with online count, level percentiles, quests, gold, respawn queue, update
   diff and levels per hour, so the last few hours are readable without touching the database.
 
 ## Caveats
 
 - Character rows are written by the periodic player save, so position, gold and playtime lag live state by up to one
-  save interval. Sampling faster than the save interval mostly reports the same values twice, which is why the frozen
-  check requires samples at least five minutes apart and skips comparisons that span a worldserver restart.
+  save interval. Movement and frozen counts only use characters whose saved playtime advanced; an unchanged row is
+  unobserved, not frozen. The check also requires five minutes and skips comparisons spanning a worldserver restart.
 - Stall detection needs snapshots separated by the requested `--stall-hours`, and a character must have accumulated at
   least half that interval as actual playtime before it counts.
 - `totalKills` is honorable kills, not creature kills, so it stays at zero on a PvE realm; the creature respawn queue

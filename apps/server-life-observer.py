@@ -629,12 +629,19 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
         if row["guid"] in old.by_guid
     ]
     online_both = [pair for pair in both if pair[0]["online"] and pair[1]["online"]]
-    moved = [displacement(*pair) for pair in online_both]
+    # Character position is persisted on a save, not continuously. An unchanged
+    # row whose playtime also did not advance says nothing about movement and used
+    # to make most of a healthy population look frozen.
+    movement_observed = [
+        pair for pair in online_both if pair[0]["total_time"] > pair[1]["total_time"]
+    ]
+    moved = [displacement(*pair) for pair in movement_observed]
     result = {
         "elapsed": elapsed,
         "extended": float(new.version == old.version),
         "tracked": len(both),
         "online_both": len(online_both),
+        "movement_observed": len(movement_observed),
         "logins": sum(1 for row, was in both if row["online"] and not was["online"]),
         "logouts": sum(1 for row, was in both if not row["online"] and was["online"]),
         "new_characters": len(new.bots) - len(both),
@@ -642,7 +649,7 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
         "p90_move": percentile(moved, 0.90),
         "frozen": sum(
             1
-            for (row, was), moved_yd in zip(online_both, moved)
+            for (row, was), moved_yd in zip(movement_observed, moved)
             if row["level"] == was["level"] and row["xp"] == was["xp"] and moved_yd < 1.0
         ),
     }
@@ -807,7 +814,7 @@ def report_world(snap: Snapshot, change: dict[str, float] | None, names: dict[in
         print(
             f"  movement since previous sample   median {change['median_move']:,.0f} yd"
             f"   p90 {change['p90_move']:,.0f} yd"
-            f"   frozen {change['frozen']:,} of {change['online_both']:,}"
+            f"   frozen {change['frozen']:,} of {change['movement_observed']:,} saved"
         )
 
 
@@ -1014,6 +1021,12 @@ def report_watchlist(
         lambda row: f"L{row['level']:<3} played {duration(row['total_time'])} "
         f"in {names.get(row['zone'], row['zone'])}",
     )
+    profession_overflow = [row for row in snap.bots if row["professions"] > 2]
+    show(
+        "more than two primary professions",
+        sorted(profession_overflow, key=lambda row: (-row["professions"], -row["level"])),
+        lambda row: f"L{row['level']:<3} {row['professions']} primary professions",
+    )
     naked = [row for row in online if row["level"] >= 10 and row["equipped_items"] < 8]
     show(
         "level 10+ wearing fewer than eight items",
@@ -1038,14 +1051,15 @@ def report_watchlist(
                 if row["online"]
                 and row["guid"] in previous.by_guid
                 and previous.by_guid[row["guid"]]["online"]
+                and row["total_time"] > previous.by_guid[row["guid"]]["total_time"]
                 and row["level"] == previous.by_guid[row["guid"]]["level"]
                 and row["xp"] == previous.by_guid[row["guid"]]["xp"]
                 and displacement(row, previous.by_guid[row["guid"]]) < 1.0
             ]
             print(
                 f"  frozen over the last {duration(change['elapsed'])}"
-                f" (online at both samples, no xp, moved under a yard):"
-                f" {len(frozen):,} of {change['online_both']:,}"
+                f" (saved while online, no xp, moved under a yard):"
+                f" {len(frozen):,} of {change['movement_observed']:,} saved"
             )
             by_zone: dict[int, int] = {}
             for row in frozen:
