@@ -1019,6 +1019,22 @@ AiPlayerbot.AutoPickTalents = 1
 # earn their power by playing rather than receive it from maintenance.
 AiPlayerbot.OrganicProgression = 1
 
+# Autonomous randombots remember an objective/site that caused repeated deaths and avoid that site until
+# they gain a level. The quest remains in the quest log and other sites for the quest remain available.
+# FailedObjectiveDeathThreshold is the number of deaths at the same objective/site required to suspend it.
+# FailedObjectiveFailureWindow is the maximum number of seconds between deaths in the same failure sequence.
+# FailedObjectiveSiteRadius controls grouping for destinations that do not expose a stable site identifier.
+# Defaults: enabled, 2 deaths, 1800 seconds, 120 yards
+AiPlayerbot.FailedObjectiveAvoidance = 1
+AiPlayerbot.FailedObjectiveDeathThreshold = 2
+AiPlayerbot.FailedObjectiveFailureWindow = 1800
+AiPlayerbot.FailedObjectiveSiteRadius = 120.0
+
+# Autonomous randombots with Resurrection Sickness use only affordable service errands or rest. Combat
+# objectives remain suspended for the aura's actual remaining duration; attacked bots still defend themselves.
+# Default: 1 (enabled)
+AiPlayerbot.ResurrectionSicknessRecovery = 1
+
 # Spells every randombot will learn automatically and every altbot will learn with maintenance
 # Default: 54197 (Cold Weather Flying)
 AiPlayerbot.RandomBotSpellIds = "54197"
