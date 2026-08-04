@@ -28,12 +28,17 @@ ENV TZ=$TZ
 # set noninteractive mode so tzdata doesn't ask to set timezone on install
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    # Remove Ubuntu's docker-clean hook so the apt archive cache mount above
+    # actually retains .deb files across builds (see apps/docker/Dockerfile).
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         # Classic install
         git \
         clang lldb lld clang-format clang-tidy \
-        make cmake \
+        make cmake ninja-build \
         gcc g++ \
         libmysqlclient-dev \
         libssl-dev \
@@ -41,7 +46,12 @@ RUN apt-get update \
         libreadline-dev \
         libncurses-dev \
         mysql-server \
-        libboost-all-dev \
+        # The five boost components deps/boost actually links plus stacktrace;
+        # libboost-all-dev drags in MPI/Python/graph libs for nothing (see
+        # apps/docker/Dockerfile for the same trim).
+        libboost-dev libboost-filesystem-dev libboost-iostreams-dev \
+        libboost-program-options-dev libboost-regex-dev \
+        libboost-stacktrace-dev libboost-thread-dev \
         # Other
         curl  \
         unzip  \
@@ -58,8 +68,7 @@ RUN apt-get update \
         # Utility for column command used by dashboard
         util-linux \
         # Certificates for downloading client data
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+        ca-certificates
 
 # Ensure git will work with the AzerothCore source directory
 RUN git config --global --add safe.directory /azerothcore

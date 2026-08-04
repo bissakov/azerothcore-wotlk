@@ -1,5 +1,12 @@
 ARG UBUNTU_VERSION=24.04 # lts
 
+# Resolves to the in-file build-deps stage by default. Point it at a tagged
+# image instead (built with `apps/docker/build-benchmark.sh prep-base`) to keep
+# the toolchain out of `docker builder prune`'s reach: images survive cache
+# pruning, cache layers do not, and reinstalling the toolchain is ~5 minutes of
+# an otherwise-cold build.
+ARG BUILD_BASE=build-deps
+
 # This target lays out the general directory skeleton for AzerothCore,
 # This target isn't intended to be directly used
 FROM ubuntu:$UBUNTU_VERSION AS skeleton
@@ -48,21 +55,48 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked              \
 
 WORKDIR /azerothcore
 
+# Toolchain for the build stage, kept as its own stage so it can be baked into
+# a tagged image (`apps/docker/build-benchmark.sh prep-base`) and reused via
+# BUILD_BASE above.
+FROM skeleton AS build-deps
+
+# The Boost list is spelled out because deps/boost asks for exactly five
+# components (filesystem, program_options, iostreams, regex, thread) and the
+# only other linked usage in the tree is stacktrace. libboost-all-dev drags in
+# MPI, Python and the graph libraries on top of that, which is a few hundred
+# megabytes downloaded and unpacked for nothing. rsync is used by the build
+# stage below to stage sources with preserved mtimes.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked         \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked     \
+    apt-get update                                                     \
+    && apt-get install -y --no-install-recommends                         \
+        build-essential ccache ninja-build cmake clang lld rsync             \
+        default-libmysqlclient-dev libssl-dev                                  \
+        libreadline-dev zlib1g-dev libbz2-dev liblzma-dev                   \
+        libboost-dev libboost-filesystem-dev libboost-iostreams-dev            \
+        libboost-program-options-dev libboost-regex-dev                         \
+        libboost-stacktrace-dev libboost-thread-dev
+
 # This target builds the docker image
 # This target can be useful to inspect the explicit outputs from the build,
-FROM skeleton AS build
+FROM ${BUILD_BASE} AS build
 
 ARG UBUNTU_VERSION
 ARG TARGETARCH
-ARG CTOOLS_BUILD="all"
+ARG CTOOLS_BUILD="db-only"
 ARG CTYPE="RelWithDebInfo"
-ARG CCACHE_CPP2="true"
-ARG CSCRIPTPCH="OFF"
+ARG CSCRIPTPCH="ON"
+ARG CCOREPCH="ON"
 ARG CSCRIPTS="static"
 ARG CMODULES="static"
 ARG CSCRIPTS_DEFAULT_LINKAGE="static"
 ARG CWITH_WARNINGS="ON"
 ARG CMAKE_EXTRA_OPTIONS=""
+# RelWithDebInfo compiles with `-O2 -g` by default, and full DWARF is a large
+# share of both compile time and object size. line-tables-only debug info
+# keeps the function+line information that crash backtraces print but drops
+# local variables in core dumps; pass "-O2 -g -DNDEBUG" for full debug info.
+ARG CFLAGS_RELWITHDEBINFO="-O2 -gline-tables-only -DNDEBUG"
 ARG GIT_DISCOVERY_ACROSS_FILESYSTEM=1
 
 ARG CCACHE_DIR="/ccache"
@@ -71,16 +105,31 @@ ARG CCACHE_DIR="/ccache"
 # barely two builds' worth, so any two branches in rotation evicted each other.
 # 10 GB holds roughly twenty and still costs nothing when unused.
 ARG CCACHE_MAXSIZE="10G"
-# COPY gives every file a fresh mtime/ctime on each build, so ccache has to be
-# told to ignore both and compare contents instead. pch_defines is required for
+# The rsync staging below keeps mtimes stable for unchanged files, but any
+# file that still reaches the compiler with a fresh timestamp (touched but
+# identical content, a rebuilt staging tree) should hit anyway, so ccache is
+# told to ignore mtime/ctime and compare contents. pch_defines is required for
 # ccache to handle the precompiled headers at all.
 ARG CCACHE_SLOPPINESS="pch_defines,time_macros,include_file_mtime,include_file_ctime"
-ARG CCACHE_COMPRESS=""
+ARG CCACHE_COMPRESS="true"
 # High zstd levels spend substantial CPU for marginal savings, especially while
 # a cold build is trying to populate the cache. Level 3 matches the CI builds.
 ARG CCACHE_COMPRESSLEVEL="3"
 ARG CCACHE_COMPILERCHECK="content"
 ARG CCACHE_LOGFILE=""
+
+# The ARGs above only scope values across the build; ccache reads its runtime
+# configuration from the environment (CCACHE_*) and its config file. Promote
+# them to ENV so the RUN below actually applies them, instead of declaring a
+# tuning block that the build never sees. Compression is applied with
+# `ccache --set-config` instead because boolean CCACHE_* variables are
+# presence-sensitive (any value enables them, even "false" or an empty string),
+# so the config file is the only unambiguous way to set them; max_size rides
+# along so the limit is recorded in the cache's own config file.
+ENV CCACHE_DIR="$CCACHE_DIR" \
+    CCACHE_SLOPPINESS="$CCACHE_SLOPPINESS" \
+    CCACHE_COMPILERCHECK="$CCACHE_COMPILERCHECK" \
+    CCACHE_LOGFILE="$CCACHE_LOGFILE"
 
 # The revision stamped into revision.h, normally read from the repository by
 # src/cmake/genrev.cmake. The repository is deliberately kept out of the build
@@ -96,22 +145,6 @@ ARG AC_REV_HASH=""
 ARG AC_REV_BRANCH=""
 ARG AC_REV_DATE=""
 
-# The Boost list is spelled out because deps/boost asks for exactly five
-# components (filesystem, program_options, iostreams, regex, thread) and the
-# only other linked usage in the tree is stacktrace. libboost-all-dev drags in
-# MPI, Python and the graph libraries on top of that, which is a few hundred
-# megabytes downloaded and unpacked for nothing.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked         \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked     \
-    apt-get update                                                     \
-    && apt-get install -y --no-install-recommends                         \
-        build-essential ccache ninja-build cmake clang lld                   \
-        default-libmysqlclient-dev libssl-dev                                  \
-        libreadline-dev zlib1g-dev libbz2-dev liblzma-dev                   \
-        libboost-dev libboost-filesystem-dev libboost-iostreams-dev            \
-        libboost-program-options-dev libboost-regex-dev                         \
-        libboost-stacktrace-dev libboost-thread-dev
-
 # Ordered least to most volatile: a source edit should not invalidate the layers
 # holding the vendored dependencies.
 COPY deps /azerothcore/deps
@@ -120,25 +153,49 @@ COPY conf /azerothcore/conf
 COPY modules /azerothcore/modules
 COPY src /azerothcore/src
 
-ARG CACHEBUST=1
+# CACHEBUST lets a caller force the build RUN to re-execute even when no
+# earlier layer changed. To have any effect it must be consumed inside the RUN
+# below; an ARG alone never invalidates a cache key for a step that does not
+# reference it.
+ARG CACHEBUST=0
 
 WORKDIR /azerothcore/build
 
-# The CMake build tree is kept in a cache mount alongside ccache. Any change
-# under src/ or modules/ invalidates the COPY layers above and forces this step
-# to re-run, and previously it re-ran against an empty directory: a full CMake
-# configure, a full Ninja graph and a full link every time, with ccache as the
-# only thing standing between that and an hour of compiling. With the tree
-# preserved, a re-run is a genuine incremental build and only touches what
-# actually changed. The mount is keyed on the settings baked into CMakeCache.txt
-# so that builds with different options don't fight over one directory.
+# The CMake build tree is kept in a cache mount alongside ccache, and the
+# sources are staged out of the COPY layers into a third cache mount
+# (/acore-src) with `rsync -rlc`: checksum comparison, and deliberately no -t,
+# so a file whose content is unchanged is not touched at all and keeps the
+# mtime of the build that last changed it. Ninja therefore sees fresh
+# timestamps only on files that really changed and rebuilds just their
+# dependents, instead of re-running every compile against COPY-minted mtimes
+# and leaning on ccache to answer them (~30 s of hit churn per build).
+#
+# The build-tree mount is keyed on the settings baked into CMakeCache.txt so
+# builds with different options don't fight over one directory; the "staged"
+# suffix retires trees configured against the pre-staging source path, which
+# cmake would reject.
 #
 # Nothing here reaches the image: `cmake --install` copies the artifacts out to
 # /azerothcore/env/dist, which is a real layer. If the tree ever does go stale,
 # `docker builder prune --filter type=exec.cachemount` clears it.
+#
+# CACHEBUST is referenced first so a non-default value forces this step to
+# re-execute even when no earlier COPY layer changed; with the default (0) the
+# `test` is a no-op. ccache is then configured (max_size/compress come from its
+# config file, the rest from the ENV above) and its stats zeroed so the
+# post-build `ccache -s` reflects only this build's hits and misses.
 RUN --mount=type=cache,target=/ccache,sharing=locked \
-    --mount=type=cache,target=/azerothcore/build,id=acore-build-$UBUNTU_VERSION-$TARGETARCH-$CTYPE-$CSCRIPTS-$CMODULES-$CTOOLS_BUILD-$CWITH_WARNINGS,sharing=locked \
-    cmake /azerothcore \
+    --mount=type=cache,target=/acore-src,sharing=locked \
+    --mount=type=cache,target=/azerothcore/build,id=acore-build-$UBUNTU_VERSION-$TARGETARCH-$CTYPE-$CSCRIPTS-$CMODULES-$CTOOLS_BUILD-$CWITH_WARNINGS-$CSCRIPTPCH-$CCOREPCH-staged,sharing=locked \
+    test "$CACHEBUST" -eq 0 || echo "cache busted (CACHEBUST=$CACHEBUST)" \
+    && rsync -rlc --delete \
+        /azerothcore/deps /azerothcore/CMakeLists.txt /azerothcore/conf \
+        /azerothcore/modules /azerothcore/src /acore-src/ \
+    && ccache --set-config max_size="$CCACHE_MAXSIZE" \
+        --set-config compression="$CCACHE_COMPRESS" \
+        --set-config compression_level="$CCACHE_COMPRESSLEVEL" \
+    && ccache -z \
+    && cmake /acore-src \
        -G Ninja \
        -DCMAKE_INSTALL_PREFIX="/azerothcore/env/dist"  \
        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld"          \
@@ -151,14 +208,20 @@ RUN --mount=type=cache,target=/ccache,sharing=locked \
        -DTOOLS_BUILD="$CTOOLS_BUILD"                   \
        -DSCRIPTS="$CSCRIPTS"                           \
        -DMODULES="$CMODULES"                           \
+       -DUSE_SCRIPTPCH="$CSCRIPTPCH"                   \
+       -DUSE_COREPCH="$CCOREPCH"                       \
        -DWITH_WARNINGS="$CWITH_WARNINGS"               \
        -DCMAKE_BUILD_TYPE="$CTYPE"                     \
+       -DCMAKE_C_FLAGS_RELWITHDEBINFO="$CFLAGS_RELWITHDEBINFO"   \
+       -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="$CFLAGS_RELWITHDEBINFO" \
        -DCMAKE_CXX_COMPILER="clang++"                  \
        -DCMAKE_C_COMPILER="clang"                      \
        -DCMAKE_CXX_COMPILER_LAUNCHER="ccache"          \
        -DCMAKE_C_COMPILER_LAUNCHER="ccache"            \
        -DBoost_USE_STATIC_LIBS="ON"                    \
+       $CMAKE_EXTRA_OPTIONS                             \
     && cmake --build . --config "$CTYPE" -j $(($(nproc) + 1)) \
+    && ccache -s                                         \
     && cmake --install . --config "$CTYPE"
 
 #############################
@@ -307,10 +370,43 @@ USER $DOCKER_USER
 
 CMD ["bash",  "-c", "source /azerothcore/apps/installer/includes/functions.sh && inst_download_client_data" ]
 
+############################
+# ccache backup / restore  #
+############################
+
+# Driven by apps/docker/ccache-io.sh. Living in the same Dockerfile as the
+# build stage guarantees these stages resolve exactly the /ccache mount the
+# compiler uses. CCACHE_IO_BUST forces just these RUNs to re-execute (the
+# script passes a timestamp) without a --no-cache that would also rebuild the
+# skeleton stage. These stages sit above the tools stage so that `tools`
+# remains the Dockerfile's last - and therefore default - target.
+
+FROM skeleton AS ccache-export
+ARG CCACHE_IO_BUST=0
+RUN --mount=type=cache,target=/ccache,sharing=locked \
+    : "$CCACHE_IO_BUST" && tar -C /ccache -cf /ccache-backup.tar .
+
+FROM scratch AS ccache-backup
+COPY --from=ccache-export /ccache-backup.tar /
+
+# Placeholder for the `seed` named context the restore path supplies
+# (`--build-context seed=DIR` shadows this stage); it exists so the Dockerfile
+# resolves - and lints - without one.
+FROM scratch AS seed
+
+FROM skeleton AS ccache-import
+ARG CCACHE_IO_BUST=0
+RUN --mount=type=cache,target=/ccache,sharing=locked \
+    --mount=type=bind,from=seed,source=/,target=/seed \
+    : "$CCACHE_IO_BUST" && tar -C /ccache -xf /seed/ccache-backup.tar
+
 ##################
 # Map Extractors #
 ##################
 
+# Copies the extractor binaries out of the build stage, so this target only
+# works when the build ran with CTOOLS_BUILD=all. The Dockerfile default is
+# db-only; docker-compose.yml's ac-tools service overrides it to all.
 FROM runtime AS tools
 
 LABEL description="AzerothCore Tools"

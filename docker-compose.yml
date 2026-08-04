@@ -31,6 +31,19 @@ x-build-args: &build-args
   AC_REV_HASH: ${AC_REV_HASH:-}
   AC_REV_BRANCH: ${AC_REV_BRANCH:-}
   AC_REV_DATE: ${AC_REV_DATE:-}
+  # The map extractors (map_extractor, mmaps_generator, vmap4_*) are only
+  # needed by the opt-in ac-tools service, so the server / db-import /
+  # client-data images default to building just dbimport. ac-tools overrides
+  # this to "all" below.
+  CTOOLS_BUILD: ${DOCKER_CTOOLS_BUILD:-db-only}
+  # `apps/docker/build-benchmark.sh prep-base` bakes the compiler toolchain
+  # into a tagged image that survives `docker builder prune`; set
+  # DOCKER_BUILD_BASE=acore-build-base:24.04 to use it.
+  BUILD_BASE: ${DOCKER_BUILD_BASE:-build-deps}
+  # line-tables-only keeps crash-backtrace fidelity (function + line) at a
+  # fraction of full DWARF's compile time and size; set
+  # DOCKER_CFLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG" for full debug info.
+  CFLAGS_RELWITHDEBINFO: ${DOCKER_CFLAGS_RELWITHDEBINFO:--O2 -gline-tables-only -DNDEBUG}
 
 services:
   ac-database:
@@ -164,7 +177,9 @@ services:
       context: .
       target: tools
       dockerfile: apps/docker/Dockerfile
-      args: *build-args
+      args:
+        <<: *build-args
+        CTOOLS_BUILD: all
     working_dir: /azerothcore/env/client/
     volumes:
       # this is not the directory of the extracted data! It's the client folder used by the extractors
