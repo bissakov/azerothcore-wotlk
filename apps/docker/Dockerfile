@@ -236,6 +236,12 @@ ARG DOCKER_USER=acore
 
 ENV ACORE_COMPONENT=undefined
 
+# The build stage configures cmake against the /acore-src cache mount, so the
+# binaries record a source directory that exists only while building. Every
+# runtime stage keeps its data and modules under /azerothcore instead, which is
+# where the Playerbots updater and the mod-llm-chat corpus have to look.
+ENV AC_SOURCE_DIRECTORY=/azerothcore
+
 # Install base dependencies for azerothcore
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
