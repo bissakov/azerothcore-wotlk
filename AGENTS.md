@@ -82,3 +82,28 @@ cmake --install build
 - `data/sql/updates/pending_db_*/` — new core database migrations.
 - `docker-compose.yml` and `docker-compose.override.yml` — deployment and realm runtime settings.
 - `apps/playerbots-benchmark.sh` — Playerbot benchmark tooling.
+
+## End of task
+
+- If — and only if — the task created or modified files that git tracks (or would track, i.e. not ignored), end with a suggested commit message matching the project's convention:
+
+  ```
+  (<type>[+<type>...]): brief description
+  <type> = feat | fix | refactor | perf | test | docs | style | build | ci | revert | chore
+  ```
+
+  Parentheses are mandatory; the description is imperative, lowercase, no trailing period. No attribution of any kind — no `Co-Authored-By`, no "Generated with" trailers, no tool signatures.
+- Types, most specific wins — pick the one matching the intent of the change, not the file kind:
+  - `(feat)` — new user- or operator-visible capability (endpoint, provider, pack field, CLI flag).
+  - `(fix)` — corrects wrong behavior; something was broken before, works after.
+  - `(refactor)` — code restructuring with no behavior change.
+  - `(perf)` — improves speed or resource use without changing behavior.
+  - `(test)` — adds or changes tests only.
+  - `(docs)` — documentation only (`README`, `docs/`, docstrings, pack/dataset READMEs).
+  - `(style)` — formatting, naming, whitespace; no semantic change.
+  - `(build)` — dependencies, `pyproject.toml`/`uv.lock`, Dockerfiles, compose, Helm, Makefile.
+  - `(ci)` — `.github/workflows/` only.
+  - `(revert)` — undoes a previous commit; reference it in the description.
+  - `(chore)` — repo housekeeping that fits none of the above (gitignore, configs, data manifests).
+- Prefer a single type. Incidental companions don't earn a union: a feature with its own tests and docs is `(feat)`. Use a union like `(fix+refactor)` only when each part would stand as its own commit, dominant type first; if the parts are unrelated, suggest splitting the commit instead.
+- Otherwise end without one. No commit message for: answering questions or analysis, work outside the repository or in git-ignored paths, amendments to work already summarized with a commit message earlier in the session (restate the one message covering the final state instead of adding a second), or tasks that left the working tree unchanged.
