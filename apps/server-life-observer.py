@@ -68,11 +68,19 @@ PRIMARY_PROFESSIONS = {
 }
 SECONDARY_PROFESSIONS = {129: "First Aid", 185: "Cooking", 356: "Fishing"}
 PROFESSIONS = PRIMARY_PROFESSIONS | SECONDARY_PROFESSIONS
+# Skills that only advance by working a node or a corpse, so their combined
+# value is the one gathering signal the character database actually keeps.
+GATHERING_PROFESSIONS = {182: "Herbalism", 186: "Mining", 393: "Skinning"}
+UNCOMMON_QUALITY = 2
 
 # Bump whenever CHARACTER_COLUMNS gains a field. Samples recorded under an
 # older version keep a zero for the new columns, so deltas that cross a version
 # boundary are reported as unavailable instead of as a huge fake gain.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+
+# Samples older than this recorded neither the gathering skill split nor the
+# equipped-quality counts, so their zeros mean "not collected", not "none".
+GATHERING_AND_QUALITY_SCHEMA = 6
 
 # Per-character telemetry columns, in the order the character query returns
 # them. Adding one here plus the matching expression in CHARACTER_QUERY is
@@ -113,12 +121,14 @@ CHARACTER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("skills", "INTEGER NOT NULL DEFAULT 0"),
     ("professions", "INTEGER NOT NULL DEFAULT 0"),
     ("profession_skill", "INTEGER NOT NULL DEFAULT 0"),
+    ("gathering_skill", "INTEGER NOT NULL DEFAULT 0"),
+    ("gathering_professions", "INTEGER NOT NULL DEFAULT 0"),
     ("spells", "INTEGER NOT NULL DEFAULT 0"),
     ("talents", "INTEGER NOT NULL DEFAULT 0"),
     ("achievements", "INTEGER NOT NULL DEFAULT 0"),
     ("equipped_items", "INTEGER NOT NULL DEFAULT 0"),
     ("item_level", "REAL NOT NULL DEFAULT 0"),
-    ("item_quality", "REAL NOT NULL DEFAULT 0"),
+    ("uncommon_items", "INTEGER NOT NULL DEFAULT 0"),
     ("inventory_items", "INTEGER NOT NULL DEFAULT 0"),
     ("mails", "INTEGER NOT NULL DEFAULT 0"),
     ("auctions", "INTEGER NOT NULL DEFAULT 0"),
@@ -164,8 +174,9 @@ SELECT
     COALESCE(qa.quest_objectives, 0),
     COALESCE(gm.guildid, 0), COALESCE(grm.group_id, 0),
     COALESCE(sk.skills, 0), COALESCE(sk.professions, 0), COALESCE(sk.profession_skill, 0),
+    COALESCE(sk.gathering_skill, 0), COALESCE(sk.gathering_professions, 0),
     COALESCE(sp.spells, 0), COALESCE(tal.talents, 0), COALESCE(ach.achievements, 0),
-    COALESCE(eq.equipped_items, 0), COALESCE(eq.item_level, 0), COALESCE(eq.item_quality, 0),
+    COALESCE(eq.equipped_items, 0), COALESCE(eq.item_level, 0), COALESCE(eq.uncommon_items, 0),
     COALESCE(inv.inventory_items, 0),
     COALESCE(ml.mails, 0), COALESCE(au.auctions, 0), COALESCE(pt.pets, 0),
     COALESCE(ds.deaths, 0), COALESCE(ds.releases, 0), COALESCE(ds.resurrections, 0),
@@ -205,7 +216,9 @@ LEFT JOIN (
         guid,
         COUNT(*) AS skills,
         SUM(skill IN ({",".join(map(str, PRIMARY_PROFESSIONS))})) AS professions,
-        SUM(IF(skill IN ({",".join(map(str, PRIMARY_PROFESSIONS))}), value, 0)) AS profession_skill
+        SUM(IF(skill IN ({",".join(map(str, PRIMARY_PROFESSIONS))}), value, 0)) AS profession_skill,
+        SUM(IF(skill IN ({",".join(map(str, GATHERING_PROFESSIONS))}), value, 0)) AS gathering_skill,
+        SUM(skill IN ({",".join(map(str, GATHERING_PROFESSIONS))})) AS gathering_professions
     FROM acore_characters.character_skills
     GROUP BY guid
 ) sk ON sk.guid = c.guid
@@ -223,7 +236,7 @@ LEFT JOIN (
         ci.guid,
         COUNT(*) AS equipped_items,
         ROUND(AVG(it.ItemLevel), 1) AS item_level,
-        ROUND(AVG(it.Quality), 2) AS item_quality
+        SUM(it.Quality >= {UNCOMMON_QUALITY}) AS uncommon_items
     FROM acore_characters.character_inventory ci
     JOIN acore_characters.item_instance ii ON ii.guid = ci.item
     JOIN acore_world.item_template it ON it.entry = ii.itemEntry
@@ -764,6 +777,9 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
     result = {
         "elapsed": elapsed,
         "extended": float(new.version == old.version),
+        "counts_quality": float(
+            min(new.version, old.version) >= GATHERING_AND_QUALITY_SCHEMA
+        ),
         "tracked": len(both),
         "online_both": len(online_both),
         "movement_observed": len(movement_observed),
@@ -788,8 +804,10 @@ def compare(new: Snapshot, old: Snapshot) -> dict[str, float]:
         "total_kills",
         "total_time",
         "professions",
+        "gathering_skill",
         "spells",
         "equipped_items",
+        "uncommon_items",
         "talents",
         "deaths",
         "releases",
@@ -909,6 +927,12 @@ def report_progression(
             f"   professions {signed(change['professions'])}"
             f"   gear equipped {signed(change['equipped_items'])}"
         )
+        if change["counts_quality"]:
+            print(
+                f"  gathering skill   {signed(change['gathering_skill']):>10}"
+                f"   {per_hour(change['gathering_skill'], elapsed):.1f}/h realm"
+                f"   uncommon gear {signed(change['uncommon_items'])}"
+            )
         if change["total_kills"]:
             print(f"  honorable kills   {signed(change['total_kills']):>10}")
     if played:
@@ -1014,7 +1038,9 @@ def report_deaths(snap: Snapshot, change: dict[str, float] | None) -> None:
     )
 
 
-def report_development(snap: Snapshot, names: dict[int, str]) -> None:
+def report_development(
+    snap: Snapshot, change: dict[str, float] | None, names: dict[int, str]
+) -> None:
     heading("Character development (online bots)")
     online = snap.online
     if not online:
@@ -1027,6 +1053,21 @@ def report_development(snap: Snapshot, names: dict[int, str]) -> None:
         f"   p50 combined skill "
         f"{median([row['profession_skill'] for row in with_profession]):.0f}"
     )
+    counted = snap.version >= GATHERING_AND_QUALITY_SCHEMA
+    if counted:
+        gatherers = [row for row in online if row["gathering_professions"]]
+        gained = (
+            f"   {signed(change['gathering_skill'])} skill since previous sample"
+            if change and change["counts_quality"]
+            else ""
+        )
+        print(
+            f"  gathering     {len(gatherers):,} of {len(online):,} gather"
+            f"   p50 combined skill "
+            f"{median([row['gathering_skill'] for row in gatherers]):.0f}{gained}"
+        )
+    else:
+        print(dim("  gathering and gear quality need a sample of the current schema"))
     primary = [row for row in snap.skills if row["skill"] in PRIMARY_PROFESSIONS]
     peak = max((row["characters"] for row in primary), default=0)
     print(dim("  primary profession census (every character, not just online)"))
@@ -1043,10 +1084,18 @@ def report_development(snap: Snapshot, names: dict[int, str]) -> None:
     )
     if secondary:
         print(f"    secondary     {secondary}")
+    slots = sum(row["equipped_items"] for row in geared)
+    uncommon = sum(row["uncommon_items"] for row in geared)
+    wearing_uncommon = sum(1 for row in geared if row["uncommon_items"])
+    quality = (
+        f"   uncommon or better {wearing_uncommon / max(len(geared), 1) * 100:.0f}% of bots"
+        f", {uncommon / max(slots, 1) * 100:.0f}% of slots"
+        if counted
+        else ""
+    )
     print(
         f"  gear          p50 {median([row['equipped_items'] for row in online]):.0f} slots filled"
-        f"   p50 item level {median([row['item_level'] for row in geared]):.0f}"
-        f"   uncommon or better {sum(1 for row in geared if row['item_quality'] >= 2) / max(len(geared), 1) * 100:.0f}%"
+        f"   p50 item level {median([row['item_level'] for row in geared]):.0f}{quality}"
     )
     print(
         f"  spellbook     p50 {median([row['spells'] for row in online]):.0f} spells"
@@ -1087,11 +1136,16 @@ def report_economy(snap: Snapshot, previous: Snapshot | None) -> None:
         f"   worth {gold(metric('auction_buyout'))}"
         f"   mail {metric('mails'):,.0f} in flight{change('mails')}"
     )
+    # Open-world gameobjects only persist a respawn row when their grid unloads,
+    # so this gauge stays near zero however much the realm gathers; the gathering
+    # figure to read is the skill gained in "Character development".
     print(
-        f"  world churn   {metric('creature_respawns'):,.0f} creatures awaiting respawn"
+        f"  world churn   awaiting respawn: creatures {metric('creature_respawns'):,.0f}"
         f"{change('creature_respawns')}"
-        f"   {metric('gameobject_respawns'):,.0f} nodes looted{change('gameobject_respawns')}"
-        f"   {metric('corpses'):,.0f} corpses"
+        f"   gameobjects {metric('gameobject_respawns'):,.0f}"
+        f"{change('gameobject_respawns')}"
+        + dim(" (grid-unloaded and instanced only)")
+        + f"   {metric('corpses'):,.0f} corpses"
     )
     print(
         f"  instances     {metric('instances'):,.0f} live"
@@ -1531,7 +1585,7 @@ def report(
         report_progression(snap, baseline, long_run, f"since {stall_hours:g}h baseline")
     report_world(snap, short, names)
     report_deaths(snap, short)
-    report_development(snap, names)
+    report_development(snap, short, names)
     report_economy(snap, previous)
     report_social(snap, previous)
     report_organic_pace(snap)

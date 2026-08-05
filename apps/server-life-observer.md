@@ -37,9 +37,10 @@ client-data change).
 ## What a sample collects
 
 Per character: identity, level, xp, money, position, online flag, playtime, creation date, quests taken and rewarded,
-guild and group, skills and profession skill totals, spells, talents, achievements, equipped slots with average item
-level and quality, bag contents, mail, auctions, pets, honorable kills, instance and flight-path state, and the
-playerbots account type (human, random bot, addclass bot).
+guild and group, skills and profession skill totals (including the gathering skills on their own), spells, talents,
+achievements, equipped slots with average item level and the count of uncommon-or-better items, bag contents, mail,
+auctions, pets, honorable kills, instance and flight-path state, and the playerbots account type (human, random bot,
+addclass bot).
 
 Realm-wide: guilds, arena teams, groups, friend lists, auction listings and their buyout value, mail in flight,
 corpses, creature and gameobject respawn queues, live instances and saves, battleground records, LLM chat history and
@@ -52,15 +53,18 @@ rolling update-diff distribution parsed from `Server.log`, container CPU and mem
   the random-bot pool.
 - **Population** — characters per pool with online counts and login/logout churn, level percentiles, a level-spread
   histogram that adapts its bucket width to the realm's ceiling, and the faction and class split of who is online.
-- **Progression** — levels, quests, gold, spells, talents, professions, gear and playtime gained, both since the
-  previous sample and since the `--stall-hours` baseline, with the fastest movers named.
+- **Progression** — levels, quests, gold, spells, talents, professions, gathering skill, gear and playtime gained, both
+  since the previous sample and since the `--stall-hours` baseline, with the fastest movers named.
 - **World activity** — zones occupied with population, level range and median per zone, how many bots are outside
   starter zones, in instances, on flight paths, dead or grouped, and the median and p90 distance moved since the
   previous sample.
-- **Character development** — how many bots know a profession and their combined skill, a per-profession census, gear
-  depth (slots filled, item level, share in uncommon or better) and spellbook, talent, pet and bag depth.
-- **Economy and world state** — gold distribution and realm total, auction and mail volume, creature and node respawn
-  queues (the mobs-being-killed proxy), instance and battleground counts.
+- **Character development** — how many bots know a profession and their combined skill, how many gather and the skill
+  they gained since the previous sample, a per-profession census, gear depth (slots filled, item level, share of bots
+  wearing an uncommon-or-better item and share of equipped slots that are) and spellbook, talent, pet and bag depth.
+- **Economy and world state** — gold distribution and realm total, auction and mail volume, the creature respawn queue
+  (the mobs-being-killed proxy) and the gameobject one, instance and battleground counts. Gathering does not show up
+  in the gameobject queue: open-world gameobjects only persist a respawn row when their grid unloads, so that gauge
+  sits near zero on a busy realm. Read gathering from the skill gained in **Character development**.
 - **Death lifecycle** — cumulative deaths, releases and resurrections, deaths per 100 bot-hours, corpse versus Spirit
   Healer recovery, and the age of currently active ghosts.
 - **Social** — guilds with members and the largest one, groups formed, friend lists, and logged LLM conversations.
@@ -82,5 +86,8 @@ rolling update-diff distribution parsed from `Server.log`, container CPU and mem
   least half that interval as actual playtime before it counts.
 - `totalKills` is honorable kills, not creature kills, so it stays at zero on a PvE realm; the creature respawn queue
   is the proxy for how much of the world is being farmed.
+- Gathering is measured as Herbalism, Mining and Skinning skill gained, because a looted open-world node leaves no
+  row behind. It is a floor, not a count of nodes: a bot working nodes that are grey for its skill gathers without
+  gaining any skill, so a realm whose gatherers have outgrown the nodes they reach reads as zero.
 - Deltas that span a change to the collected column set are suppressed rather than reported as a large fake gain. Bump
   `SCHEMA_VERSION` when adding a column to `CHARACTER_COLUMNS`.
