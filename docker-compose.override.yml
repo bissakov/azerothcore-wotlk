@@ -6,11 +6,6 @@ services:
 
   ac-worldserver:
     environment:
-      # The image builds out of an /acore-src cache mount, so the binary's
-      # built-in source directory points at a build-only path. Name the
-      # directory the module trees are actually mounted at below, or the
-      # Playerbots updater aborts startup.
-      AC_SOURCE_DIRECTORY: "/azerothcore"
       # Player AI is updated by map workers. The upstream default is one,
       # while this host has eight physical cores.
       AC_MAP_UPDATE_THREADS: "8"
