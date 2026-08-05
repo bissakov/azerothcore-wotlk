@@ -56,6 +56,20 @@ cmake --install build
   disposable database; and test bot, map-update, database, or LLM-path changes in-game or with
   the relevant benchmark. Treat map-update latency and bot throughput as regression-sensitive.
 
+## Long-running commands
+
+- Preserve the active prompt cache during builds, benchmarks, monitoring, and other long-running
+  work. Never block a single agent/tool round trip for more than 60 seconds. Configure the command
+  to yield within 30 seconds, then poll the same running session at intervals of at most 60 seconds
+  until it finishes.
+- Do not use a long foreground sleep or chain delayed inspection as `sleep N; <check>` when `N` is
+  greater than 60 seconds. For passive waiting, keep the process/session alive and poll it; when no
+  process needs to stay attached, run the check separately after short, visible wait intervals.
+- An overall command timeout may be longer than 60 seconds when the work genuinely needs it. The
+  restriction is on silent blocking time between agent turns, not on total build, test, benchmark,
+  or observation duration.
+- While work is still running, give the user a concise progress update at least every 60 seconds.
+
 ## Implementation guidance
 
 - Follow `.editorconfig` and the surrounding code's style. Avoid drive-by formatting, legacy-name
