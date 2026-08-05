@@ -97,6 +97,17 @@ cmake --install build
 - `docker-compose.yml` and `docker-compose.override.yml` — deployment and realm runtime settings.
 - `apps/playerbots-benchmark.sh` — Playerbot benchmark tooling.
 
+## Issue titles
+
+- When suggesting an issue title, use the same type signifier as commits instead of a plain name:
+
+  ```
+  (<type>[+<type>...]): brief description
+  ```
+
+  Use the type definitions and single-type preference below. Keep the description imperative,
+  lowercase, and without a trailing period.
+
 ## End of task
 
 - If — and only if — the task created or modified files that git tracks (or would track, i.e. not ignored), end with a suggested commit message matching the project's convention:
